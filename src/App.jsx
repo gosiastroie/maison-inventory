@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const CATEGORIES = ["Clothing","Shoes","Bags","Accessories","Electronics","Furniture","Books","Kitchenware","Toys","Sports","Jewelry","Other"];
 const CONDITIONS = ["Excellent","Good","Fair","Poor"];
@@ -35,7 +35,7 @@ const G = {
   yellow:"#fbbf24", red:"#f87171",
 };
 
-const emptyItem   = { id:null,category:"",name:"",color:"",size:"",material:"",whenBought:"",price:"",condition:"",location:"",status:"keep",notes:"",customSellLink:"",customDonateLink:"" };
+const emptyItem   = { id:null,category:"",name:"",color:"",size:"",material:"",whenBought:"",price:"",condition:"",location:"",status:"keep",notes:"",customSellLink:"",customDonateLink:"",photo:null };
 const emptyOutfit = { id:null,name:"",occasion:"",season:"All Seasons",itemIds:[],notes:"",rating:0 };
 
 function uid() { return Date.now().toString(36)+Math.random().toString(36).slice(2); }
@@ -69,19 +69,13 @@ export default function App() {
   const [shopError,  setShopError]  = useState("");
   const [wishlist,   setWishlist]   = useState([]);
   const [saved,      setSaved]      = useState(false);
+  const [lightbox,   setLightbox]   = useState(null);
+  const photoRef = useRef();
 
   useEffect(()=>{
-    const loadData = async () => {
-      try {
-        const r1 = localStorage.getItem("hh_items");
-        if(r1) setItems(JSON.parse(r1));
-        const r2 = localStorage.getItem("hh_outfits");
-        if(r2) setOutfits(JSON.parse(r2));
-        const r3 = localStorage.getItem("hh_wishlist");
-        if(r3) setWishlist(JSON.parse(r3));
-      } catch{}
-    };
-    loadData();
+    try { const r=localStorage.getItem("hh_items"); if(r) setItems(JSON.parse(r)); } catch{}
+    try { const r=localStorage.getItem("hh_outfits"); if(r) setOutfits(JSON.parse(r)); } catch{}
+    try { const r=localStorage.getItem("hh_wishlist"); if(r) setWishlist(JSON.parse(r)); } catch{}
   },[]);
 
   const saveItems   = v => { setItems(v);    try{localStorage.setItem("hh_items",JSON.stringify(v))}catch{} };
@@ -89,6 +83,15 @@ export default function App() {
   const saveWishlist= v => { setWishlist(v); try{localStorage.setItem("hh_wishlist",JSON.stringify(v))}catch{} };
   const flash = () => { setSaved(true); setTimeout(()=>setSaved(false),1500); };
   const stInfo = v => STATUS_OPTIONS.find(s=>s.value===v)||STATUS_OPTIONS[0];
+
+  // Photo handler
+  const handlePhoto = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setEditItem(p=>({...p, photo: ev.target.result}));
+    reader.readAsDataURL(file);
+  };
 
   const openNewItem    = () => { setEditItem({...emptyItem}); setPage("inventory"); setView("form"); };
   const openEditItem   = it => { setEditItem({...it}); setView("form"); };
@@ -168,11 +171,16 @@ export default function App() {
         .spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
         .serif{font-family:'Cormorant Garamond',serif}
         .star{cursor:pointer;font-size:20px;transition:transform .15s}.star:hover{transform:scale(1.3)}
+        .photo-upload{border:2px dashed ${G.border};border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:all .18s}
+        .photo-upload:hover{border-color:${G.gold};background:${G.surface}}
+        .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.95);display:flex;align-items:center;justify-content:center;z-index:300;cursor:zoom-out}
+        .lightbox img{max-width:92vw;max-height:92vh;border-radius:8px;object-fit:contain}
       `}</style>
 
+      {/* NAV */}
       <nav style={{background:G.surface,borderBottom:`1px solid ${G.border}`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,flexWrap:"wrap",gap:10}}>
         <div>
-          <div className="serif" style={{fontSize:22,fontWeight:700,letterSpacing:"-.3px"}}><span style={{color:G.gold}}>MAISON</span> INVENTORY</div>
+          <div className="serif" style={{fontSize:22,fontWeight:700}}><span style={{color:G.gold}}>MAISON</span> INVENTORY</div>
           <div style={{fontSize:10,color:G.dim,letterSpacing:"2px",marginTop:1}}>PERSONAL CATALOG</div>
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
@@ -190,6 +198,7 @@ export default function App() {
         </div>
       </nav>
 
+      {/* STATS */}
       {page==="inventory"&&view==="grid"&&(
         <div style={{display:"flex",gap:10,padding:"14px 24px",overflowX:"auto",borderBottom:`1px solid ${G.surface}`}}>
           {[{l:"Total",v:items.length},{l:"Sell",v:items.filter(i=>i.status==="sell").length,c:G.orange},{l:"Donate",v:items.filter(i=>i.status==="donate").length,c:G.blue},{l:"Keep",v:items.filter(i=>i.status==="keep").length,c:G.green},{l:"Est. Value",v:"$"+items.filter(i=>i.price).reduce((a,i)=>a+(parseFloat(i.price)||0),0).toLocaleString()},{l:"Outfits",v:outfits.length,c:G.purple}].map(s=>(
@@ -201,6 +210,7 @@ export default function App() {
         </div>
       )}
 
+      {/* INVENTORY GRID */}
       {page==="inventory"&&view==="grid"&&(
         <div style={{padding:"20px 24px"}} className="slide">
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16,alignItems:"center"}}>
@@ -228,19 +238,29 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:14}}>
               {filteredItems.map(item=>{const st=stInfo(item.status);return(
                 <div key={item.id} className="card hover-card" onClick={()=>openDetailItem(item)}>
-                  <div style={{padding:"16px 16px 12px"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                  {/* Photo thumbnail */}
+                  {item.photo ? (
+                    <div style={{height:160,overflow:"hidden",background:G.surface}}>
+                      <img src={item.photo} alt={item.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                    </div>
+                  ):(
+                    <div style={{height:100,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",color:G.dim,fontSize:28}}>
+                      📦
+                    </div>
+                  )}
+                  <div style={{padding:"14px 14px 10px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                       <span className="tag" style={{background:"#2a2520",color:G.gold,fontSize:9}}>{item.category||"Item"}</span>
                       <span className="chip" style={{background:st.color+"22",color:st.color}}>{st.icon} {st.label}</span>
                     </div>
-                    <div className="serif" style={{fontSize:17,fontWeight:600,lineHeight:1.3,marginBottom:6}}>{item.name}</div>
+                    <div className="serif" style={{fontSize:16,fontWeight:600,lineHeight:1.3,marginBottom:5}}>{item.name}</div>
                     <div style={{fontSize:11,color:G.muted,display:"flex",gap:10,flexWrap:"wrap"}}>
                       {item.color&&<span>● {item.color}</span>}
                       {item.size&&<span>⌀ {item.size}</span>}
                       {item.condition&&<span>★ {item.condition}</span>}
                     </div>
-                    {item.location&&<div style={{fontSize:11,color:G.dim,marginTop:7}}>📍 {item.location}</div>}
-                    {item.price&&<div className="serif" style={{fontSize:15,color:G.gold,marginTop:8}}>${parseFloat(item.price).toLocaleString()}</div>}
+                    {item.location&&<div style={{fontSize:11,color:G.dim,marginTop:6}}>📍 {item.location}</div>}
+                    {item.price&&<div className="serif" style={{fontSize:15,color:G.gold,marginTop:6}}>${parseFloat(item.price).toLocaleString()}</div>}
                   </div>
                   <div style={{height:3,background:`linear-gradient(90deg,${st.color}55,transparent)`}}/>
                 </div>
@@ -250,11 +270,34 @@ export default function App() {
         </div>
       )}
 
+      {/* ITEM FORM */}
       {page==="inventory"&&view==="form"&&(
         <div style={{maxWidth:700,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:26,fontWeight:700,marginBottom:4}}>{editItem.id?"Edit Item":"Add New Item"}</div>
           <div style={{color:G.dim,fontSize:13,marginBottom:24}}>{editItem.id?"Update the details":"Catalog a new household item"}</div>
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+            {/* PHOTO UPLOAD */}
+            <div>
+              <div className="lbl">Photo</div>
+              <input ref={photoRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{display:"none"}}/>
+              {editItem.photo ? (
+                <div style={{position:"relative",borderRadius:12,overflow:"hidden",maxHeight:260}}>
+                  <img src={editItem.photo} alt="item" style={{width:"100%",maxHeight:260,objectFit:"cover",display:"block"}}/>
+                  <div style={{position:"absolute",top:10,right:10,display:"flex",gap:8}}>
+                    <button className="btn" onClick={()=>photoRef.current.click()} style={{background:"rgba(0,0,0,.7)",color:G.text,padding:"6px 12px",fontSize:11}}>📷 Change</button>
+                    <button className="btn" onClick={()=>setEditItem(p=>({...p,photo:null}))} style={{background:"rgba(180,30,30,.8)",color:"#fff",padding:"6px 12px",fontSize:11}}>✕ Remove</button>
+                  </div>
+                </div>
+              ):(
+                <div className="photo-upload" onClick={()=>photoRef.current.click()}>
+                  <div style={{fontSize:36,marginBottom:10}}>📷</div>
+                  <div style={{fontSize:13,color:G.muted,marginBottom:4}}>Tap to take a photo or upload from gallery</div>
+                  <div style={{fontSize:11,color:G.dim}}>Works with your phone camera too!</div>
+                </div>
+              )}
+            </div>
+
             <div className="g2">
               <div><div className="lbl">Category *</div><select className="inp" value={editItem.category} onChange={e=>setEditItem(p=>({...p,category:e.target.value}))}><option value="">Select...</option>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></div>
               <div><div className="lbl">Item Name *</div><input className="inp" placeholder="e.g. Blue Denim Jacket" value={editItem.name} onChange={e=>setEditItem(p=>({...p,name:e.target.value}))}/></div>
@@ -295,10 +338,18 @@ export default function App() {
         </div>
       )}
 
+      {/* ITEM DETAIL */}
       {page==="inventory"&&view==="detail"&&selItem&&(()=>{
         const item=items.find(i=>i.id===selItem.id)||selItem; const st=stInfo(item.status);
         return(
           <div style={{maxWidth:660,margin:"0 auto",padding:"28px 24px"}} className="slide">
+            {/* Photo */}
+            {item.photo&&(
+              <div style={{borderRadius:14,overflow:"hidden",marginBottom:20,cursor:"zoom-in",maxHeight:320}} onClick={()=>setLightbox(item.photo)}>
+                <img src={item.photo} alt={item.name} style={{width:"100%",maxHeight:320,objectFit:"cover",display:"block"}}/>
+                <div style={{padding:"6px 12px",background:G.surface,fontSize:11,color:G.dim,textAlign:"center"}}>Tap to enlarge 🔍</div>
+              </div>
+            )}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
               <div>
                 <span className="tag" style={{background:"#2a2520",color:G.gold,display:"block",marginBottom:8}}>{item.category}</span>
@@ -343,6 +394,7 @@ export default function App() {
         );
       })()}
 
+      {/* OUTFITS GRID */}
       {page==="outfits"&&(view==="outfitGrid"||view==="grid")&&(
         <div style={{padding:"24px"}} className="slide">
           <div className="serif" style={{fontSize:26,fontWeight:700,marginBottom:4}}>My Outfits</div>
@@ -357,21 +409,32 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:14}}>
               {outfits.map(outfit=>{
                 const oItems=outfit.itemIds.map(id=>items.find(i=>i.id===id)).filter(Boolean);
+                const photoItems=oItems.filter(i=>i.photo);
                 return(
                   <div key={outfit.id} className="card hover-card" onClick={()=>openDetailOutfit(outfit)}>
-                    <div style={{padding:"16px"}}>
+                    {/* Mini photo strip */}
+                    {photoItems.length>0&&(
+                      <div style={{display:"flex",height:80,overflow:"hidden"}}>
+                        {photoItems.slice(0,3).map(it=>(
+                          <div key={it.id} style={{flex:1,overflow:"hidden"}}>
+                            <img src={it.photo} alt={it.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{padding:"14px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                         <span className="tag" style={{background:"#1e1a2e",color:G.purple}}>{outfit.occasion||"Outfit"}</span>
                         <span className="tag" style={{background:"#1e2a1e",color:G.green}}>{outfit.season}</span>
                       </div>
-                      <div className="serif" style={{fontSize:17,fontWeight:600,marginBottom:10}}>{outfit.name}</div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
-                        {oItems.slice(0,4).map(it=>(
+                      <div className="serif" style={{fontSize:17,fontWeight:600,marginBottom:8}}>{outfit.name}</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                        {oItems.slice(0,3).map(it=>(
                           <span key={it.id} style={{background:G.surface,border:`1px solid ${G.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:G.muted}}>{it.name}</span>
                         ))}
-                        {oItems.length>4&&<span style={{fontSize:11,color:G.dim}}>+{oItems.length-4} more</span>}
+                        {oItems.length>3&&<span style={{fontSize:11,color:G.dim}}>+{oItems.length-3} more</span>}
                       </div>
-                      {outfit.rating>0&&<div style={{fontSize:13}}>{[1,2,3,4,5].map(s=><span key={s}>{s<=outfit.rating?"⭐":"☆"}</span>)}</div>}
+                      {outfit.rating>0&&<div style={{fontSize:12}}>{[1,2,3,4,5].map(s=><span key={s}>{s<=outfit.rating?"⭐":"☆"}</span>)}</div>}
                     </div>
                     <div style={{height:3,background:`linear-gradient(90deg,${G.purple}55,transparent)`}}/>
                   </div>
@@ -382,6 +445,7 @@ export default function App() {
         </div>
       )}
 
+      {/* OUTFIT FORM */}
       {page==="outfits"&&view==="outfitForm"&&(
         <div style={{maxWidth:720,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:26,fontWeight:700,marginBottom:4}}>{editOutfit.id?"Edit Outfit":"Create Outfit"}</div>
@@ -403,17 +467,20 @@ export default function App() {
             <div>
               <div className="lbl" style={{marginBottom:10}}>Select Items for This Outfit</div>
               {items.length===0?(
-                <div style={{color:G.dim,fontSize:13,padding:14,background:G.surface,borderRadius:8}}>Add items to your inventory first, then build outfits from them.</div>
+                <div style={{color:G.dim,fontSize:13,padding:14,background:G.surface,borderRadius:8}}>Add items to your inventory first.</div>
               ):(
                 <>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:8,maxHeight:300,overflowY:"auto",padding:2}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:8,maxHeight:320,overflowY:"auto",padding:2}}>
                     {items.map(it=>{const sel=editOutfit.itemIds.includes(it.id);return(
                       <div key={it.id} onClick={()=>toggleOutfitItem(it.id)}
-                        style={{background:sel?"#182818":G.surface,border:`1.5px solid ${sel?G.green:G.border}`,borderRadius:8,padding:"10px 12px",cursor:"pointer",transition:"all .18s"}}>
-                        <div style={{fontSize:10,color:sel?G.green:G.muted,fontWeight:sel?600:400,marginBottom:3,textTransform:"uppercase",letterSpacing:"1px"}}>{it.category}</div>
-                        <div style={{fontSize:13,fontWeight:500,lineHeight:1.3,marginBottom:3}}>{it.name}</div>
-                        {it.color&&<div style={{fontSize:11,color:G.dim}}>● {it.color}</div>}
-                        {sel&&<div style={{marginTop:5,fontSize:11,color:G.green,fontWeight:600}}>✓ Added</div>}
+                        style={{background:sel?"#182818":G.surface,border:`1.5px solid ${sel?G.green:G.border}`,borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all .18s"}}>
+                        {it.photo&&<img src={it.photo} alt={it.name} style={{width:"100%",height:80,objectFit:"cover",display:"block"}}/>}
+                        <div style={{padding:"8px 10px"}}>
+                          <div style={{fontSize:10,color:sel?G.green:G.muted,fontWeight:sel?600:400,marginBottom:2,textTransform:"uppercase",letterSpacing:"1px"}}>{it.category}</div>
+                          <div style={{fontSize:12,fontWeight:500,lineHeight:1.3}}>{it.name}</div>
+                          {it.color&&<div style={{fontSize:10,color:G.dim,marginTop:2}}>● {it.color}</div>}
+                          {sel&&<div style={{marginTop:4,fontSize:10,color:G.green,fontWeight:600}}>✓ Added</div>}
+                        </div>
                       </div>
                     );})}
                   </div>
@@ -421,7 +488,7 @@ export default function App() {
                 </>
               )}
             </div>
-            <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Describe this look, where you'd wear it, what you still need…" value={editOutfit.notes} onChange={e=>setEditOutfit(p=>({...p,notes:e.target.value}))}/></div>
+            <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Describe this look, where you'd wear it…" value={editOutfit.notes} onChange={e=>setEditOutfit(p=>({...p,notes:e.target.value}))}/></div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:4}}>
               {editOutfit.id&&<button className="btn" onClick={()=>handleDeleteOutfit(editOutfit.id)} style={{background:"#3a1e1e",color:G.red,padding:"9px 18px",fontSize:12,border:"1px solid #6b2020"}}>Delete</button>}
               <button className="btn" onClick={()=>setView("outfitGrid")} style={{background:G.card,color:G.text,padding:"9px 22px",fontSize:12,border:`1px solid ${G.border}`}}>Cancel</button>
@@ -431,6 +498,7 @@ export default function App() {
         </div>
       )}
 
+      {/* OUTFIT DETAIL */}
       {page==="outfits"&&view==="outfitDetail"&&selOutfit&&(()=>{
         const outfit=outfits.find(o=>o.id===selOutfit.id)||selOutfit;
         const oItems=outfit.itemIds.map(id=>items.find(i=>i.id===id)).filter(Boolean);
@@ -449,17 +517,16 @@ export default function App() {
             </div>
             <div className="divider"/>
             <div className="lbl" style={{marginBottom:12}}>Items in This Outfit ({oItems.length})</div>
-            {oItems.length===0?<div style={{color:G.dim,fontSize:13,marginBottom:20}}>No items added to this outfit yet.</div>:(
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(175px,1fr))",gap:10,marginBottom:22}}>
+            {oItems.length===0?<div style={{color:G.dim,fontSize:13,marginBottom:20}}>No items added yet.</div>:(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:22}}>
                 {oItems.map(it=>{const st=stInfo(it.status);return(
-                  <div key={it.id} className="card" style={{padding:"12px 14px",cursor:"pointer"}} onClick={()=>{setPage("inventory");openDetailItem(it);}}>
-                    <div style={{fontSize:10,color:G.gold,marginBottom:4,textTransform:"uppercase",letterSpacing:"1px"}}>{it.category}</div>
-                    <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{it.name}</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                      {it.color&&<span style={{fontSize:10,color:G.muted}}>● {it.color}</span>}
-                      {it.size&&<span style={{fontSize:10,color:G.muted}}>⌀ {it.size}</span>}
+                  <div key={it.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setPage("inventory");openDetailItem(it);}}>
+                    {it.photo&&<img src={it.photo} alt={it.name} style={{width:"100%",height:100,objectFit:"cover",display:"block"}}/>}
+                    <div style={{padding:"10px 12px"}}>
+                      <div style={{fontSize:10,color:G.gold,marginBottom:3,textTransform:"uppercase",letterSpacing:"1px"}}>{it.category}</div>
+                      <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{it.name}</div>
+                      <span className="chip" style={{background:st.color+"22",color:st.color,fontSize:9}}>{st.icon} {st.label}</span>
                     </div>
-                    <div style={{marginTop:6}}><span className="chip" style={{background:st.color+"22",color:st.color,fontSize:9}}>{st.icon} {st.label}</span></div>
                   </div>
                 );})}
               </div>
@@ -475,6 +542,7 @@ export default function App() {
         );
       })()}
 
+      {/* SHOP */}
       {page==="shop"&&(
         <div style={{maxWidth:860,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:26,fontWeight:700,marginBottom:4}}>Shop & Discover</div>
@@ -567,6 +635,7 @@ export default function App() {
         </div>
       )}
 
+      {/* LINKS MODAL */}
       {linksModal&&(
         <div className="overlay" onClick={()=>setLinksModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
@@ -582,6 +651,13 @@ export default function App() {
             ))}
             <button className="btn" onClick={()=>setLinksModal(null)} style={{background:G.card,color:G.text,padding:"9px",fontSize:12,marginTop:18,width:"100%",border:`1px solid ${G.border}`}}>Close</button>
           </div>
+        </div>
+      )}
+
+      {/* LIGHTBOX */}
+      {lightbox&&(
+        <div className="lightbox" onClick={()=>setLightbox(null)}>
+          <img src={lightbox} alt="Full size"/>
         </div>
       )}
     </div>
