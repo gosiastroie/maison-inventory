@@ -441,4 +441,612 @@ export default function App() {
       `}</style>
 
       {/* NAV */}
-      <nav style={{ background: `linear-gradient(135deg,#e8d5bc,#f0e4d0)`, bo
+      <nav style={{ background: `linear-gradient(135deg,#e8d5bc,#f0e4d0)`, borderBottom: `1px solid ${G.border}`, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50, flexWrap: "wrap", gap: 10, boxShadow: "0 2px 12px rgba(139,90,43,.12)" }}>
+        <div>
+          <div className="serif" style={{ fontSize: 24, fontWeight: 700, color: G.text }}><span style={{ color: G.terracotta }}>MAISON</span> <span style={{ color: G.gold }}>INVENTORY</span></div>
+          <div style={{ fontSize: 10, color: G.muted, letterSpacing: "2px", marginTop: 1 }}>PERSONAL CATALOG 🏡</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {(view === "form" || view === "detail" || view === "outfitForm" || view === "outfitDetail") && (
+            <button className="btn" onClick={() => setView(backView)} style={{ background: "rgba(255,255,255,.7)", color: G.text, padding: "7px 16px", fontSize: 12, border: `1px solid ${G.border}` }}>← Back</button>
+          )}
+          {["inventory", "outfits", "shop"].map(p => (
+            <button key={p} className="tab" onClick={() => { setPage(p); if (p !== "outfits") setView("grid"); else setView("outfitGrid"); }}
+              style={{ background: page === p ? `linear-gradient(135deg,${G.terracotta},${G.gold})` : "rgba(255,255,255,.6)", color: page === p ? "#fff" : G.muted, border: `1.5px solid ${page === p ? G.terracotta : G.border}`, boxShadow: page === p ? "0 3px 10px rgba(193,96,58,.3)" : "none" }}>
+              {p === "inventory" ? "🗂 Inventory" : p === "outfits" ? "👗 Outfits" : "🛍 Shop"}
+            </button>
+          ))}
+          {page === "inventory" && view === "grid" && <button className="btn" onClick={openNewItem} style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "8px 20px", fontSize: 12, fontWeight: 700, boxShadow: "0 3px 10px rgba(193,96,58,.35)" }}>+ Add Item</button>}
+          {page === "outfits" && (view === "outfitGrid" || view === "grid") && <button className="btn" onClick={openNewOutfit} style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "8px 20px", fontSize: 12, fontWeight: 700, boxShadow: "0 3px 10px rgba(193,96,58,.35)" }}>+ Outfit</button>}
+          <button className="btn" onClick={handleLogout} style={{ background: "rgba(255,255,255,.6)", color: G.muted, padding: "7px 14px", fontSize: 11, border: `1px solid ${G.border}` }}>Sign Out</button>
+        </div>
+      </nav>
+
+      {dbLoading && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "12px", background: `linear-gradient(135deg,#f5ede0,#ead5bc)`, borderBottom: `1px solid ${G.border}`, fontSize: 13, color: G.muted }}>
+          <div className="spin" style={{ width: 16, height: 16, border: `2px solid ${G.border}`, borderTopColor: G.terracotta, borderRadius: "50%" }} />
+          Loading your inventory…
+        </div>
+      )}
+
+      {/* STATS */}
+      {page === "inventory" && view === "grid" && !dbLoading && (
+        <div style={{ display: "flex", gap: 10, padding: "14px 24px", overflowX: "auto", borderBottom: `1px solid ${G.border}`, background: `linear-gradient(135deg,#f5ede0,#ead5bc)` }}>
+          {[
+            { l: "Total Items", v: items.length, icon: "📦" },
+            { l: "To Sell", v: items.filter(i => i.status === "sell").length, c: G.orange, icon: "💰" },
+            { l: "To Donate", v: items.filter(i => i.status === "donate").length, c: G.blue, icon: "🤝" },
+            { l: "To Keep", v: items.filter(i => i.status === "keep").length, c: G.green, icon: "♡" },
+            { l: "Est. Value", v: "$" + items.filter(i => i.price).reduce((a, i) => a + (parseFloat(i.price) || 0), 0).toLocaleString(), icon: "✨" },
+            { l: "Outfits", v: outfits.length, c: G.purple, icon: "👗" },
+          ].map(s => (
+            <div key={s.l} className="stat-box">
+              <div style={{ fontSize: 14, marginBottom: 2 }}>{s.icon}</div>
+              <div className="serif" style={{ fontSize: 19, fontWeight: 700, color: s.c || G.terracotta }}>{s.v}</div>
+              <div style={{ fontSize: 9, color: G.muted, letterSpacing: "1px", textTransform: "uppercase", marginTop: 2 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* INVENTORY GRID */}
+      {page === "inventory" && view === "grid" && (
+        <div className="slide">
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "16px 24px 10px", alignItems: "center", background: G.surface, borderBottom: `1px solid ${G.border}` }}>
+            <input className="inp" placeholder="🔍 Search items..." value={searchQ} onChange={e => setSearchQ(e.target.value)} style={{ width: 180 }} />
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {["All", ...CATEGORIES].map(c => (
+                <button key={c} className="tab" onClick={() => handleFilterCat(c)}
+                  style={{ background: filterCat === c ? `linear-gradient(135deg,${G.terracotta},${G.gold})` : "rgba(255,255,255,.7)", color: filterCat === c ? "#fff" : G.muted, border: `1.5px solid ${filterCat === c ? G.terracotta : G.border}`, padding: "5px 11px", fontSize: 11 }}>{c}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {["All", ...STATUS_OPTIONS.map(s => s.value)].map(s => (
+                <button key={s} className="tab" onClick={() => setFilterStatus(s)}
+                  style={{ background: filterStatus === s ? `linear-gradient(135deg,${G.terracotta},${G.gold})` : "rgba(255,255,255,.7)", color: filterStatus === s ? "#fff" : G.muted, border: `1.5px solid ${filterStatus === s ? G.terracotta : G.border}`, padding: "5px 11px", fontSize: 11 }}>
+                  {s === "All" ? "All" : STATUS_OPTIONS.find(o => o.value === s)?.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {activeSubs.length > 0 && (
+            <div className="subcat-bar">
+              <span style={{ fontSize: 10, color: G.muted, letterSpacing: "1px", textTransform: "uppercase", alignSelf: "center", marginRight: 4 }}>Filter:</span>
+              {["All", ...activeSubs].map(s => (
+                <button key={s} className="subtab" onClick={() => setFilterSub(s)}
+                  style={{ background: filterSub === s ? "rgba(193,96,58,.15)" : "rgba(255,255,255,.6)", color: filterSub === s ? G.terracotta : G.muted, border: `1px solid ${filterSub === s ? G.terracotta : G.border}` }}>{s}</button>
+              ))}
+            </div>
+          )}
+          <div style={{ padding: "16px 24px" }}>
+            {filteredItems.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "70px 20px", color: G.dim }}>
+                <div style={{ fontSize: 48, marginBottom: 14 }}>🧺</div>
+                <div className="serif" style={{ fontSize: 24, color: G.muted, marginBottom: 6 }}>Nothing here yet</div>
+                <div style={{ fontSize: 13, color: G.dim }}>Tap "+ Add Item" to start cataloging</div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 14 }}>
+                {filteredItems.map(item => { const st = stInfo(item.status); return (
+                  <div key={item.id} className="card hover-card" onClick={() => openDetailItem(item)}>
+                    {item.photo ? (
+                      <div style={{ height: 200, overflow: "hidden", background: G.surface, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <img src={item.photo} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "contain", background: G.surface }} />
+                      </div>
+                    ) : (
+                      <div style={{ height: 90, background: `linear-gradient(135deg,${G.surface},${G.border}22)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>📦</div>
+                    )}
+                    <div style={{ padding: "14px 14px 10px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          <span className="tag" style={{ background: `${G.terracotta}18`, color: G.terracotta, fontSize: 9 }}>{item.category || "Item"}</span>
+                          {item.subcategory && <span className="tag" style={{ background: `${G.gold}18`, color: G.gold, fontSize: 9 }}>{item.subcategory}</span>}
+                        </div>
+                        <span className="chip" style={{ background: st.color + "22", color: st.color }}>{st.icon} {st.label}</span>
+                      </div>
+                      <div className="serif" style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.3, marginBottom: 5, color: G.text }}>{item.name}</div>
+                      <div style={{ fontSize: 11, color: G.muted, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        {item.color && <span>● {item.color}</span>}
+                        {item.size && <span>⌀ {item.size}</span>}
+                        {item.condition && <span>★ {item.condition}</span>}
+                      </div>
+                      {item.location && <div style={{ fontSize: 11, color: G.dim, marginTop: 6 }}>📍 {item.location}</div>}
+                      {item.price && <div className="serif" style={{ fontSize: 15, color: G.gold, marginTop: 6, fontWeight: 700 }}>${parseFloat(item.price).toLocaleString()}</div>}
+                    </div>
+                    <div style={{ height: 3, background: `linear-gradient(90deg,${st.color}66,transparent)` }} />
+                  </div>
+                ); })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ITEM FORM */}
+      {page === "inventory" && view === "form" && (
+        <div style={{ maxWidth: 700, margin: "0 auto", padding: "28px 24px" }} className="slide">
+          <div className="serif" style={{ fontSize: 28, fontWeight: 700, marginBottom: 4, color: G.text }}>{editItem.id ? "Edit Item ✏️" : "Add New Item ✨"}</div>
+          <div style={{ color: G.muted, fontSize: 13, marginBottom: 24 }}>{editItem.id ? "Update the details below" : "Add a photo and AI will fill in the details automatically!"}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+            {/* PHOTO SECTION */}
+            <div>
+              <div className="lbl" style={{ marginBottom: 10 }}>
+                Photo 📷 <span style={{ color: G.terracotta, fontWeight: 600, textTransform: "none", letterSpacing: 0, fontSize: 11 }}>✨ AI auto-fills details from your photo</span>
+              </div>
+
+              {/* Hidden file inputs */}
+              <input ref={cameraRef}  type="file" accept="image/*" capture="environment" onChange={e => handlePhotoFile(e.target.files[0])} style={{ display: "none" }} />
+              <input ref={galleryRef} type="file" accept="image/*" onChange={e => handlePhotoFile(e.target.files[0])} style={{ display: "none" }} />
+
+              {editItem.photo ? (
+                <div style={{ borderRadius: 14, overflow: "hidden", border: `1px solid ${G.border}`, background: G.surface }}>
+                  {/* Photo display — full item visible */}
+                  <div style={{ position: "relative", background: G.surface, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 280, maxHeight: 400 }}>
+                    <img src={editItem.photo} alt="item"
+                      style={{ maxWidth: "100%", maxHeight: 400, objectFit: "contain", display: "block", filter: photoAnalyzing ? "blur(3px)" : "none", transition: "filter .3s" }} />
+                    {photoAnalyzing && (
+                      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(242,235,224,.85)", gap: 12 }}>
+                        <div className="spin" style={{ width: 40, height: 40, border: `3px solid ${G.border}`, borderTopColor: G.terracotta, borderRadius: "50%" }} />
+                        <div style={{ fontSize: 15, color: G.terracotta, fontWeight: 700 }}>✨ AI is analysing your photo…</div>
+                        <div style={{ fontSize: 12, color: G.muted }}>Detecting category, color, material & more</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* AI results banner */}
+                  {!photoAnalyzing && (editItem.category || editItem.color || editItem.material || editItem.condition) && (
+                    <div style={{ padding: "10px 14px", background: `${G.terracotta}10`, borderTop: `1px solid ${G.border}` }}>
+                      <div style={{ fontSize: 11, color: G.terracotta, fontWeight: 700, marginBottom: 6 }}>✨ AI detected:</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: editItem.notes ? 6 : 0 }}>
+                        {editItem.category    && <span className="tag" style={{ background: `${G.terracotta}18`, color: G.terracotta, fontSize: 10 }}>📁 {editItem.category}</span>}
+                        {editItem.subcategory && <span className="tag" style={{ background: `${G.gold}18`,      color: G.gold,      fontSize: 10 }}>🏷 {editItem.subcategory}</span>}
+                        {editItem.color       && <span className="tag" style={{ background: `${G.green}18`,     color: G.green,     fontSize: 10 }}>🎨 {editItem.color}</span>}
+                        {editItem.material    && <span className="tag" style={{ background: `${G.blue}18`,      color: G.blue,      fontSize: 10 }}>🧵 {editItem.material}</span>}
+                        {editItem.condition   && <span className="tag" style={{ background: `${G.purple}18`,    color: G.purple,    fontSize: 10 }}>★ {editItem.condition}</span>}
+                        {editItem.size        && <span className="tag" style={{ background: `${G.orange}18`,    color: G.orange,    fontSize: 10 }}>⌀ {editItem.size}</span>}
+                      </div>
+                      {editItem.notes && <div style={{ fontSize: 11, color: G.muted, fontStyle: "italic", lineHeight: 1.5 }}>📝 {editItem.notes}</div>}
+                    </div>
+                  )}
+
+                  {/* AI error */}
+                  {aiError && <div style={{ padding: "8px 14px", background: "#fdecea", fontSize: 12, color: G.red }}>{aiError}</div>}
+
+                  {/* Photo action buttons */}
+                  <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: "rgba(255,255,255,.6)", borderTop: `1px solid ${G.border}` }}>
+                    <button className="btn" onClick={() => cameraRef.current.click()}  style={{ flex: 1, background: "rgba(255,255,255,.9)", color: G.text, padding: "8px", fontSize: 11, fontWeight: 600, border: `1px solid ${G.border}` }}>📷 Camera</button>
+                    <button className="btn" onClick={() => galleryRef.current.click()} style={{ flex: 1, background: "rgba(255,255,255,.9)", color: G.text, padding: "8px", fontSize: 11, fontWeight: 600, border: `1px solid ${G.border}` }}>🖼 Gallery</button>
+                    <button className="btn" onClick={() => { setEditItem(p => ({ ...p, photo: null })); setAiError(""); }} style={{ background: "#fdecea", color: G.red, padding: "8px 14px", fontSize: 11, fontWeight: 600, border: `1px solid ${G.red}33` }}>✕ Remove</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ border: `2px dashed ${G.border}`, borderRadius: 14, padding: "24px 20px", background: "rgba(255,255,255,.5)" }}>
+                  <div style={{ textAlign: "center", marginBottom: 18 }}>
+                    <div style={{ fontSize: 42, marginBottom: 8 }}>📷</div>
+                    <div style={{ fontSize: 14, color: G.text, fontWeight: 600, marginBottom: 4 }}>Add a photo of your item</div>
+                    <div style={{ fontSize: 12, color: G.muted, marginBottom: 12 }}>✨ AI will automatically detect category, color, material, condition & more</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="photo-btn" onClick={() => cameraRef.current.click()}
+                      style={{ background: `linear-gradient(135deg,${G.terracotta}18,${G.gold}18)`, border: `1.5px solid ${G.terracotta}44`, color: G.terracotta }}>
+                      <span style={{ fontSize: 28 }}>📷</span>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>Take Photo</span>
+                      <span style={{ fontSize: 11, color: G.muted }}>Use your camera</span>
+                    </button>
+                    <button className="photo-btn" onClick={() => galleryRef.current.click()}
+                      style={{ background: `linear-gradient(135deg,${G.blue}12,${G.purple}12)`, border: `1.5px solid ${G.blue}44`, color: G.blue }}>
+                      <span style={{ fontSize: 28 }}>🖼</span>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>From Gallery</span>
+                      <span style={{ fontSize: 11, color: G.muted }}>Phone or computer</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* FORM FIELDS */}
+            <div className="g2">
+              <div>
+                <div className="lbl">Category *</div>
+                <select className="inp" value={editItem.category} onChange={e => handleCategoryChange(e.target.value)}>
+                  <option value="">Select category...</option>
+                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="lbl">Subcategory</div>
+                <select className="inp" value={editItem.subcategory} onChange={e => setEditItem(p => ({ ...p, subcategory: e.target.value }))} disabled={!SUBCATEGORIES[editItem.category]}>
+                  <option value="">Select subcategory...</option>
+                  {(SUBCATEGORIES[editItem.category] || []).map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div><div className="lbl">Item Name *</div><input className="inp" placeholder="e.g. Floral Wrap Dress" value={editItem.name} onChange={e => setEditItem(p => ({ ...p, name: e.target.value }))} /></div>
+            <div className="g3">
+              <div><div className="lbl">Color</div><input className="inp" placeholder="e.g. Navy Blue" value={editItem.color} onChange={e => setEditItem(p => ({ ...p, color: e.target.value }))} /></div>
+              <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42, 10L" value={editItem.size} onChange={e => setEditItem(p => ({ ...p, size: e.target.value }))} /></div>
+              <div><div className="lbl">Material</div><input className="inp" placeholder="Cotton, Silk" value={editItem.material} onChange={e => setEditItem(p => ({ ...p, material: e.target.value }))} /></div>
+            </div>
+            <div className="g3">
+              <div><div className="lbl">When Bought</div><input className="inp" type="date" value={editItem.whenBought} onChange={e => setEditItem(p => ({ ...p, whenBought: e.target.value }))} /></div>
+              <div><div className="lbl">Price ($)</div><input className="inp" type="number" placeholder="0.00" value={editItem.price} onChange={e => setEditItem(p => ({ ...p, price: e.target.value }))} /></div>
+              <div>
+                <div className="lbl">Condition</div>
+                <select className="inp" value={editItem.condition} onChange={e => setEditItem(p => ({ ...p, condition: e.target.value }))}>
+                  <option value="">Select...</option>
+                  {CONDITIONS.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div><div className="lbl">Location in House</div><select className="inp" value={editItem.location} onChange={e => setEditItem(p => ({ ...p, location: e.target.value }))}><option value="">Select...</option>{LOCATIONS.map(l => <option key={l}>{l}</option>)}</select></div>
+            <div>
+              <div className="lbl">Status / Decision</div>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button key={s.value} className="btn" onClick={() => setEditItem(p => ({ ...p, status: s.value }))}
+                    style={{ padding: "7px 13px", fontSize: 11, fontWeight: 600, background: editItem.status === s.value ? s.color : "rgba(255,255,255,.7)", color: editItem.status === s.value ? "#fff" : G.muted, border: `1.5px solid ${editItem.status === s.value ? s.color : G.border}` }}>
+                    {s.icon} {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="g2">
+              <div><div className="lbl">Sell Link</div><input className="inp" placeholder="https://..." value={editItem.customSellLink} onChange={e => setEditItem(p => ({ ...p, customSellLink: e.target.value }))} /></div>
+              <div><div className="lbl">Donate Link</div><input className="inp" placeholder="https://..." value={editItem.customDonateLink} onChange={e => setEditItem(p => ({ ...p, customDonateLink: e.target.value }))} /></div>
+            </div>
+            <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Write anything about this item…" value={editItem.notes} onChange={e => setEditItem(p => ({ ...p, notes: e.target.value }))} /></div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
+              {editItem.id && <button className="btn" onClick={() => handleDeleteItem(editItem.id)} style={{ background: "#fdecea", color: G.red, padding: "9px 18px", fontSize: 12, border: `1px solid ${G.red}44`, fontWeight: 600 }}>🗑 Delete</button>}
+              <button className="btn" onClick={() => setView("grid")} style={{ background: "rgba(255,255,255,.8)", color: G.muted, padding: "9px 22px", fontSize: 12, border: `1px solid ${G.border}` }}>Cancel</button>
+              <button className="btn" onClick={handleSaveItem} style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "9px 26px", fontSize: 12, fontWeight: 700, boxShadow: "0 3px 10px rgba(193,96,58,.35)" }}>
+                {saved ? "✓ Saved!" : editItem.id ? "Save Changes" : "Add Item ✨"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ITEM DETAIL */}
+      {page === "inventory" && view === "detail" && selItem && (() => {
+        const item = items.find(i => i.id === selItem.id) || selItem; const st = stInfo(item.status);
+        return (
+          <div style={{ maxWidth: 660, margin: "0 auto", padding: "28px 24px" }} className="slide">
+            {item.photo && (
+              <div style={{ borderRadius: 16, overflow: "hidden", marginBottom: 20, cursor: "zoom-in", boxShadow: "0 8px 24px rgba(139,90,43,.2)", background: G.surface, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setLightbox(item.photo)}>
+                <img src={item.photo} alt={item.name} style={{ maxWidth: "100%", maxHeight: 380, objectFit: "contain", display: "block" }} />
+                <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "5px 12px", background: "rgba(242,235,224,.85)", fontSize: 11, color: G.dim, textAlign: "center" }}>Tap to enlarge 🔍</div>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+              <div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                  <span className="tag" style={{ background: `${G.terracotta}18`, color: G.terracotta }}>{item.category}</span>
+                  {item.subcategory && <span className="tag" style={{ background: `${G.gold}18`, color: G.gold }}>{item.subcategory}</span>}
+                </div>
+                <div className="serif" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.2, color: G.text }}>{item.name}</div>
+              </div>
+              <button className="btn" onClick={() => openEditItem(item)} style={{ background: "rgba(255,255,255,.8)", color: G.text, padding: "8px 16px", fontSize: 12, border: `1px solid ${G.border}`, whiteSpace: "nowrap", fontWeight: 600 }}>✏️ Edit</button>
+            </div>
+            <div style={{ marginBottom: 22 }}>
+              <div className="lbl" style={{ marginBottom: 10 }}>Status</div>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button key={s.value} className="btn" onClick={() => updateStatus(item.id, s.value)}
+                    style={{ padding: "7px 13px", fontSize: 11, fontWeight: 600, background: item.status === s.value ? s.color : "rgba(255,255,255,.7)", color: item.status === s.value ? "#fff" : G.muted, border: `1.5px solid ${item.status === s.value ? s.color : G.border}` }}>
+                    {s.icon} {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="divider" />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 22 }}>
+              {[
+                { l: "Color", v: item.color }, { l: "Size", v: item.size }, { l: "Material", v: item.material },
+                { l: "Condition", v: item.condition }, { l: "Location", v: item.location },
+                { l: "When Bought", v: item.whenBought ? new Date(item.whenBought).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "" },
+                { l: "Purchase Price", v: item.price ? `$${parseFloat(item.price).toLocaleString()}` : "", gold: true },
+              ].filter(d => d.v).map(d => (
+                <div key={d.l} style={{ background: "rgba(255,255,255,.7)", borderRadius: 10, padding: "11px 13px", border: `1px solid ${G.border}` }}>
+                  <div className="lbl" style={{ marginBottom: 3 }}>{d.l}</div>
+                  <div style={{ fontSize: 13, color: d.gold ? G.gold : G.text, fontWeight: 600 }}>{d.v}</div>
+                </div>
+              ))}
+            </div>
+            {item.notes && (
+              <>
+                <div className="lbl">Notes</div>
+                <div style={{ background: "rgba(255,255,255,.7)", border: `1px solid ${G.border}`, borderRadius: 10, padding: 14, fontSize: 13, color: G.muted, lineHeight: 1.7, marginBottom: 18, whiteSpace: "pre-wrap" }}>{item.notes}</div>
+              </>
+            )}
+            <div className="divider" />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+              <button className="btn" onClick={() => setLinksModal("sell")} style={{ background: `${G.orange}18`, color: G.orange, border: `1px solid ${G.orange}44`, padding: "8px 16px", fontSize: 12, fontWeight: 600 }}>💰 Sell Platforms</button>
+              <button className="btn" onClick={() => setLinksModal("donate")} style={{ background: `${G.blue}18`, color: G.blue, border: `1px solid ${G.blue}44`, padding: "8px 16px", fontSize: 12, fontWeight: 600 }}>🤝 Donate To</button>
+              {item.customSellLink && <a href={item.customSellLink} target="_blank" rel="noreferrer"><button className="btn" style={{ background: "rgba(255,255,255,.8)", color: G.gold, padding: "8px 16px", fontSize: 12, border: `1px solid ${G.border}`, fontWeight: 600 }}>🔗 My Sell Link</button></a>}
+              {item.customDonateLink && <a href={item.customDonateLink} target="_blank" rel="noreferrer"><button className="btn" style={{ background: "rgba(255,255,255,.8)", color: G.gold, padding: "8px 16px", fontSize: 12, border: `1px solid ${G.border}`, fontWeight: 600 }}>🔗 My Donate Link</button></a>}
+              <button className="btn" onClick={() => { setShopQuery(`items to match my ${item.color || ""} ${item.subcategory || item.category} ${item.name}`); setPage("shop"); }} style={{ background: `${G.purple}18`, color: G.purple, border: `1px solid ${G.purple}44`, padding: "8px 16px", fontSize: 12, fontWeight: 600 }}>🛍 Find Matches</button>
+            </div>
+            <button className="btn" onClick={() => handleDeleteItem(item.id)} style={{ background: "#fdecea", color: G.red, padding: "9px 18px", fontSize: 12, border: `1px solid ${G.red}33`, fontWeight: 600 }}>🗑 Delete Item</button>
+          </div>
+        );
+      })()}
+
+      {/* OUTFITS GRID */}
+      {page === "outfits" && (view === "outfitGrid" || view === "grid") && (
+        <div style={{ padding: "24px" }} className="slide">
+          <div className="serif" style={{ fontSize: 28, fontWeight: 700, marginBottom: 4, color: G.text }}>My Outfits 👗</div>
+          <div style={{ color: G.muted, fontSize: 13, marginBottom: 22 }}>Combine your inventory items into complete looks</div>
+          {outfits.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "70px 20px", color: G.dim }}>
+              <div style={{ fontSize: 48, marginBottom: 14 }}>👗</div>
+              <div className="serif" style={{ fontSize: 24, color: G.muted, marginBottom: 6 }}>No outfits yet</div>
+              <div style={{ fontSize: 13 }}>Create your first outfit from your inventory</div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 14 }}>
+              {outfits.map(outfit => {
+                const oItems = outfit.itemIds.map(id => items.find(i => i.id === id)).filter(Boolean);
+                const photoItems = oItems.filter(i => i.photo);
+                return (
+                  <div key={outfit.id} className="card hover-card" onClick={() => openDetailOutfit(outfit)}>
+                    {photoItems.length > 0 && (
+                      <div style={{ display: "flex", height: 90, overflow: "hidden", background: G.surface }}>
+                        {photoItems.slice(0, 3).map(it => (
+                          <div key={it.id} style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <img src={it.photo} alt={it.name} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ padding: "14px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span className="tag" style={{ background: `${G.purple}18`, color: G.purple }}>{outfit.occasion || "Outfit"}</span>
+                        <span className="tag" style={{ background: `${G.green}18`, color: G.green }}>{outfit.season}</span>
+                      </div>
+                      <div className="serif" style={{ fontSize: 17, fontWeight: 600, marginBottom: 8, color: G.text }}>{outfit.name}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 }}>
+                        {oItems.slice(0, 3).map(it => (
+                          <span key={it.id} style={{ background: `${G.terracotta}12`, border: `1px solid ${G.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: G.muted }}>{it.name}</span>
+                        ))}
+                        {oItems.length > 3 && <span style={{ fontSize: 11, color: G.dim }}>+{oItems.length - 3} more</span>}
+                      </div>
+                      {outfit.rating > 0 && <div style={{ fontSize: 13 }}>{[1, 2, 3, 4, 5].map(s => <span key={s}>{s <= outfit.rating ? "⭐" : "☆"}</span>)}</div>}
+                    </div>
+                    <div style={{ height: 3, background: `linear-gradient(90deg,${G.terracotta}66,${G.gold}44,transparent)` }} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* OUTFIT FORM */}
+      {page === "outfits" && view === "outfitForm" && (
+        <div style={{ maxWidth: 720, margin: "0 auto", padding: "28px 24px" }} className="slide">
+          <div className="serif" style={{ fontSize: 28, fontWeight: 700, marginBottom: 4, color: G.text }}>{editOutfit.id ? "Edit Outfit" : "Create Outfit ✨"}</div>
+          <div style={{ color: G.muted, fontSize: 13, marginBottom: 24 }}>Build a look from your inventory</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="g3">
+              <div><div className="lbl">Outfit Name *</div><input className="inp" placeholder="e.g. Sunday Brunch" value={editOutfit.name} onChange={e => setEditOutfit(p => ({ ...p, name: e.target.value }))} /></div>
+              <div><div className="lbl">Occasion</div><select className="inp" value={editOutfit.occasion} onChange={e => setEditOutfit(p => ({ ...p, occasion: e.target.value }))}><option value="">Select...</option>{OUTFIT_OCCASIONS.map(o => <option key={o}>{o}</option>)}</select></div>
+              <div><div className="lbl">Season</div><select className="inp" value={editOutfit.season} onChange={e => setEditOutfit(p => ({ ...p, season: e.target.value }))}>{SEASONS.map(s => <option key={s}>{s}</option>)}</select></div>
+            </div>
+            <div>
+              <div className="lbl">Rating</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {[1, 2, 3, 4, 5].map(s => (
+                  <span key={s} className="star" onClick={() => setEditOutfit(p => ({ ...p, rating: s === p.rating ? 0 : s }))} style={{ color: s <= editOutfit.rating ? G.gold : G.border }}>{s <= editOutfit.rating ? "⭐" : "☆"}</span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="lbl" style={{ marginBottom: 10 }}>Select Items for This Outfit</div>
+              {items.length === 0 ? (
+                <div style={{ color: G.muted, fontSize: 13, padding: 14, background: "rgba(255,255,255,.6)", borderRadius: 8, border: `1px solid ${G.border}` }}>Add items to your inventory first.</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(155px,1fr))", gap: 8, maxHeight: 360, overflowY: "auto", padding: 2 }}>
+                    {items.map(it => { const sel = editOutfit.itemIds.includes(it.id); return (
+                      <div key={it.id} onClick={() => toggleOutfitItem(it.id)}
+                        style={{ background: sel ? `${G.green}18` : "rgba(255,255,255,.7)", border: `1.5px solid ${sel ? G.green : G.border}`, borderRadius: 8, overflow: "hidden", cursor: "pointer", transition: "all .18s" }}>
+                        {it.photo && (
+                          <div style={{ height: 90, background: G.surface, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                            <img src={it.photo} alt={it.name} style={{ maxWidth: "100%", maxHeight: 90, objectFit: "contain" }} />
+                          </div>
+                        )}
+                        <div style={{ padding: "8px 10px" }}>
+                          <div style={{ fontSize: 9, color: sel ? G.green : G.muted, fontWeight: sel ? 600 : 400, marginBottom: 2, textTransform: "uppercase", letterSpacing: "1px" }}>{it.subcategory || it.category}</div>
+                          <div style={{ fontSize: 12, fontWeight: 500, lineHeight: 1.3, color: G.text }}>{it.name}</div>
+                          {it.color && <div style={{ fontSize: 10, color: G.dim, marginTop: 2 }}>● {it.color}</div>}
+                          {sel && <div style={{ marginTop: 4, fontSize: 10, color: G.green, fontWeight: 700 }}>✓ Added</div>}
+                        </div>
+                      </div>
+                    ); })}
+                  </div>
+                  {editOutfit.itemIds.length > 0 && <div style={{ fontSize: 12, color: G.green, marginTop: 8, fontWeight: 700 }}>✓ {editOutfit.itemIds.length} item{editOutfit.itemIds.length !== 1 ? "s" : ""} selected</div>}
+                </>
+              )}
+            </div>
+            <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Describe this look, where you'd wear it…" value={editOutfit.notes} onChange={e => setEditOutfit(p => ({ ...p, notes: e.target.value }))} /></div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
+              {editOutfit.id && <button className="btn" onClick={() => handleDeleteOutfit(editOutfit.id)} style={{ background: "#fdecea", color: G.red, padding: "9px 18px", fontSize: 12, border: `1px solid ${G.red}33`, fontWeight: 600 }}>🗑 Delete</button>}
+              <button className="btn" onClick={() => setView("outfitGrid")} style={{ background: "rgba(255,255,255,.8)", color: G.muted, padding: "9px 22px", fontSize: 12, border: `1px solid ${G.border}` }}>Cancel</button>
+              <button className="btn" onClick={handleSaveOutfit} style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "9px 26px", fontSize: 12, fontWeight: 700, boxShadow: "0 3px 10px rgba(193,96,58,.35)" }}>
+                {saved ? "✓ Saved!" : editOutfit.id ? "Save Changes" : "Create Outfit ✨"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OUTFIT DETAIL */}
+      {page === "outfits" && view === "outfitDetail" && selOutfit && (() => {
+        const outfit = outfits.find(o => o.id === selOutfit.id) || selOutfit;
+        const oItems = outfit.itemIds.map(id => items.find(i => i.id === id)).filter(Boolean);
+        return (
+          <div style={{ maxWidth: 660, margin: "0 auto", padding: "28px 24px" }} className="slide">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+              <div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <span className="tag" style={{ background: `${G.purple}18`, color: G.purple }}>{outfit.occasion || "Outfit"}</span>
+                  <span className="tag" style={{ background: `${G.green}18`, color: G.green }}>{outfit.season}</span>
+                </div>
+                <div className="serif" style={{ fontSize: 28, fontWeight: 700, color: G.text }}>{outfit.name}</div>
+                {outfit.rating > 0 && <div style={{ marginTop: 8, fontSize: 14 }}>{[1, 2, 3, 4, 5].map(s => <span key={s}>{s <= outfit.rating ? "⭐" : "☆"}</span>)}</div>}
+              </div>
+              <button className="btn" onClick={() => openEditOutfit(outfit)} style={{ background: "rgba(255,255,255,.8)", color: G.text, padding: "8px 16px", fontSize: 12, border: `1px solid ${G.border}`, whiteSpace: "nowrap", fontWeight: 600 }}>✏️ Edit</button>
+            </div>
+            <div className="divider" />
+            <div className="lbl" style={{ marginBottom: 12 }}>Items in This Outfit ({oItems.length})</div>
+            {oItems.length === 0 ? <div style={{ color: G.muted, fontSize: 13, marginBottom: 20 }}>No items added yet.</div> : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 10, marginBottom: 22 }}>
+                {oItems.map(it => { const st = stInfo(it.status); return (
+                  <div key={it.id} className="card" style={{ cursor: "pointer" }} onClick={() => { setPage("inventory"); openDetailItem(it); }}>
+                    {it.photo && (
+                      <div style={{ height: 110, background: G.surface, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                        <img src={it.photo} alt={it.name} style={{ maxWidth: "100%", maxHeight: 110, objectFit: "contain" }} />
+                      </div>
+                    )}
+                    <div style={{ padding: "10px 12px" }}>
+                      <div style={{ fontSize: 9, color: G.terracotta, marginBottom: 2, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 600 }}>{it.subcategory || it.category}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: G.text }}>{it.name}</div>
+                      <span className="chip" style={{ background: st.color + "22", color: st.color, fontSize: 9 }}>{st.icon} {st.label}</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            )}
+            {outfit.notes && <><div className="lbl">Notes</div><div style={{ background: "rgba(255,255,255,.7)", border: `1px solid ${G.border}`, borderRadius: 10, padding: 14, fontSize: 13, color: G.muted, lineHeight: 1.7, marginBottom: 18, whiteSpace: "pre-wrap" }}>{outfit.notes}</div></>}
+            <div className="divider" />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn" onClick={() => { setShopQuery(`items to complete my ${outfit.name} outfit${outfit.occasion ? " for " + outfit.occasion : ""}`); setPage("shop"); }}
+                style={{ background: `${G.purple}18`, color: G.purple, border: `1px solid ${G.purple}44`, padding: "9px 18px", fontSize: 12, fontWeight: 600 }}>🛍 Find Items to Complete This Outfit</button>
+              <button className="btn" onClick={() => handleDeleteOutfit(outfit.id)} style={{ background: "#fdecea", color: G.red, padding: "9px 18px", fontSize: 12, border: `1px solid ${G.red}33`, fontWeight: 600 }}>🗑 Delete</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* SHOP */}
+      {page === "shop" && (
+        <div style={{ maxWidth: 860, margin: "0 auto", padding: "28px 24px" }} className="slide">
+          <div className="serif" style={{ fontSize: 28, fontWeight: 700, marginBottom: 4, color: G.text }}>Shop & Discover 🛍</div>
+          <div style={{ color: G.muted, fontSize: 13, marginBottom: 24 }}>AI-powered suggestions tailored to your wardrobe & home</div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
+            <input className="inp" placeholder="e.g. sweater to match my beige dress, cozy throw blanket…"
+              value={shopQuery} onChange={e => setShopQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleShopSearch()}
+              style={{ flex: 1, minWidth: 200, fontSize: 14 }} />
+            <button className="btn" onClick={handleShopSearch} disabled={shopLoading}
+              style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "10px 24px", fontSize: 13, fontWeight: 700, opacity: shopLoading ? .7 : 1, whiteSpace: "nowrap", boxShadow: "0 3px 10px rgba(193,96,58,.35)" }}>
+              {shopLoading ? "Searching…" : "🔍 Find Items"}
+            </button>
+          </div>
+          <div style={{ marginBottom: 24 }}>
+            <div className="lbl" style={{ marginBottom: 10 }}>Quick Ideas</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {["Sweater to match a dress", "Shoes for a casual outfit", "Statement handbag", "Cozy throw blanket", "Kitchen storage", "Silk scarf", "White sneakers", "Blazer for work", "Jeans to match a blouse", "Sunglasses", "Bedroom rug", "Candle holders"].map(q => (
+                <button key={q} className="btn" onClick={() => setShopQuery(q)} style={{ background: "rgba(255,255,255,.7)", color: G.muted, border: `1px solid ${G.border}`, padding: "6px 13px", fontSize: 11 }}>{q}</button>
+              ))}
+            </div>
+          </div>
+          {shopError && <div style={{ background: "#fdecea", border: `1px solid ${G.red}44`, borderRadius: 8, padding: "12px 16px", color: G.red, fontSize: 13, marginBottom: 20 }}>{shopError}</div>}
+          {shopLoading && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px", gap: 16 }}>
+              <div className="spin" style={{ width: 38, height: 38, border: `3px solid ${G.border}`, borderTopColor: G.terracotta, borderRadius: "50%" }} />
+              <div style={{ color: G.muted, fontSize: 13 }}>Finding the best matches for your wardrobe…</div>
+            </div>
+          )}
+          {shopResults.length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <div className="serif" style={{ fontSize: 20, fontWeight: 600, marginBottom: 14, color: G.text }}>Suggestions for "{shopQuery}"</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(255px,1fr))", gap: 14 }}>
+                {shopResults.map((r, i) => {
+                  const inWL = wishlist.some(w => w.title === r.title);
+                  return (
+                    <div key={i} className="card" style={{ padding: "18px" }}>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+                        {(r.tags || []).map(t => <span key={t} className="tag" style={{ background: `${G.terracotta}15`, color: G.terracotta, fontSize: 9 }}>{t}</span>)}
+                      </div>
+                      <div className="serif" style={{ fontSize: 16, fontWeight: 600, marginBottom: 6, lineHeight: 1.3, color: G.text }}>{r.title}</div>
+                      <div style={{ fontSize: 12, color: G.muted, lineHeight: 1.6, marginBottom: 12 }}>{r.description}</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <div className="serif" style={{ fontSize: 16, color: G.gold, fontWeight: 700 }}>{r.priceRange}</div>
+                        <div style={{ fontSize: 11, color: G.dim }}>{r.where}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <a href={r.searchUrl || `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(r.title)}`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", flex: 1 }}>
+                          <button className="btn" style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "7px 14px", fontSize: 11, fontWeight: 700, width: "100%" }}>Shop Now →</button>
+                        </a>
+                        <button className="btn" onClick={() => inWL ? removeFromWishlist(wishlist.find(w => w.title === r.title)?.id) : addToWishlist(r)}
+                          style={{ background: inWL ? `${G.green}18` : "rgba(255,255,255,.7)", color: inWL ? G.green : G.muted, border: `1px solid ${inWL ? G.green : G.border}`, padding: "7px 12px", fontSize: 13, fontWeight: 600 }}>
+                          {inWL ? "✓" : "♡"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {wishlist.length > 0 && (
+            <div>
+              <div className="divider" />
+              <div className="serif" style={{ fontSize: 20, fontWeight: 600, marginBottom: 14, color: G.text }}>💛 My Wishlist ({wishlist.length})</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {wishlist.map(w => (
+                  <div key={w.id} className="card" style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <div className="serif" style={{ fontSize: 15, fontWeight: 600, marginBottom: 2, color: G.text }}>{w.title}</div>
+                      <div style={{ fontSize: 11, color: G.muted }}>{w.where_to_buy || w.where} · {w.price_range || w.priceRange}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <a href={w.search_url || w.searchUrl || `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(w.title)}`} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                        <button className="btn" style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "6px 14px", fontSize: 11, fontWeight: 700 }}>Shop →</button>
+                      </a>
+                      <button className="btn" onClick={() => removeFromWishlist(w.id)} style={{ background: "#fdecea", color: G.red, padding: "6px 12px", fontSize: 11, border: `1px solid ${G.red}33`, fontWeight: 600 }}>Remove</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {!shopLoading && shopResults.length === 0 && wishlist.length === 0 && (
+            <div style={{ textAlign: "center", padding: "60px 20px", color: G.dim }}>
+              <div style={{ fontSize: 48, marginBottom: 14 }}>🛍</div>
+              <div className="serif" style={{ fontSize: 22, color: G.muted, marginBottom: 6 }}>What are you looking for?</div>
+              <div style={{ fontSize: 13 }}>Describe what you need — AI will suggest items that match your wardrobe & home</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* LINKS MODAL */}
+      {linksModal && (
+        <div className="overlay" onClick={() => setLinksModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="serif" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4, color: G.text }}>{linksModal === "sell" ? "💰 Sell Online" : "🤝 Donate To"}</div>
+            <div style={{ fontSize: 12, color: G.muted, marginBottom: 18 }}>{linksModal === "sell" ? "Popular resale platforms" : "Organizations accepting donations"}</div>
+            {(linksModal === "sell" ? SELL_SITES : DONATE_SITES).map(s => (
+              <div key={s.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${G.border}` }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: G.text }}>{s.name}</div>
+                <a href={s.url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                  <button className="btn" style={{ background: `linear-gradient(135deg,${G.terracotta},${G.gold})`, color: "#fff", padding: "5px 14px", fontSize: 11, fontWeight: 700 }}>Visit →</button>
+                </a>
+              </div>
+            ))}
+            <button className="btn" onClick={() => setLinksModal(null)} style={{ background: "rgba(255,255,255,.8)", color: G.muted, padding: "9px", fontSize: 12, marginTop: 18, width: "100%", border: `1px solid ${G.border}` }}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* LIGHTBOX */}
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="Full size" />
+        </div>
+      )}
+    </div>
+  );
+}
