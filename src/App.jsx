@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 const CATEGORIES = ["Clothing","Shoes","Bags","Accessories","Electronics","Furniture","Books","Kitchenware","Toys","Sports","Jewelry","Other"];
-
 const SUBCATEGORIES = {
   Clothing: ["Dresses","Tops & Blouses","Sweaters","Tees & Tanks","Pants","Jeans","Jackets & Coats","Skirts","Shorts","Blazers","Pajamas","Activewear","Sweatshirts & Sweatpants","Intimates","Swimwear"],
   Shoes: ["Sneakers","Heels","Flats","Boots","Sandals","Loafers","Athletic","Slippers","Mules","Wedges"],
@@ -12,7 +17,6 @@ const SUBCATEGORIES = {
   Kitchenware: ["Cookware","Bakeware","Utensils","Appliances","Dinnerware","Glassware","Storage","Other"],
   Sports: ["Gym Equipment","Outdoor","Water Sports","Team Sports","Cycling","Yoga","Other"],
 };
-
 const CONDITIONS = ["Excellent","Good","Fair","Poor"];
 const STATUS_OPTIONS = [
   { value:"keep",       label:"Keep",       color:"#4ade80", icon:"♡"  },
@@ -63,6 +67,14 @@ async function callClaude(messages, system="") {
 }
 
 export default function App() {
+  const [user,       setUser]       = useState(null);
+  const [authView,   setAuthView]   = useState("login"); // login | signup
+  const [authEmail,  setAuthEmail]  = useState("");
+  const [authPass,   setAuthPass]   = useState("");
+  const [authError,  setAuthError]  = useState("");
+  const [authLoading,setAuthLoading]= useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
   const [items,      setItems]      = useState([]);
   const [outfits,    setOutfits]    = useState([]);
   const [page,       setPage]       = useState("inventory");
@@ -83,17 +95,49 @@ export default function App() {
   const [wishlist,   setWishlist]   = useState([]);
   const [saved,      setSaved]      = useState(false);
   const [lightbox,   setLightbox]   = useState(null);
+  const [dbLoading,  setDbLoading]  = useState(false);
   const photoRef = useRef();
 
+  // Check if user is already logged in
   useEffect(()=>{
-    try { const r=localStorage.getItem("hh_items"); if(r) setItems(JSON.parse(r)); } catch{}
-    try { const r=localStorage.getItem("hh_outfits"); if(r) setOutfits(JSON.parse(r)); } catch{}
-    try { const r=localStorage.getItem("hh_wishlist"); if(r) setWishlist(JSON.parse(r)); } catch{}
+    supabase.auth.getSession().then(({data:{session}})=>{
+      setUser(session?.user ?? null);
+      setCheckingAuth(false);
+    });
+    const {data:{subscription}} = supabase.auth.onAuthStateChange((_,session)=>{
+      setUser(session?.user ?? null);
+    });
+    return ()=>subscription.unsubscribe();
   },[]);
 
-  const saveItems   = v => { setItems(v);    try{localStorage.setItem("hh_items",JSON.stringify(v))}catch{} };
-  const saveOutfits = v => { setOutfits(v);  try{localStorage.setItem("hh_outfits",JSON.stringify(v))}catch{} };
-  const saveWishlist= v => { setWishlist(v); try{localStorage.setItem("hh_wishlist",JSON.stringify(v))}catch{} };
+  // Load data when user logs in
+  useEffect(()=>{
+    if(user) loadAllData();
+  },[user]);
+
+  async function loadAllData() {
+    setDbLoading(true);
+    try {
+      const [i,o,w] = await Promise.all([
+        supabase.from("items").select("*").eq("user_id",user.id).order("created_at",{ascending:false}),
+        supabase.from("outfits").select("*").eq("user_id",user.id).order("created_at",{ascending:false}),
+        supabase.from("wishlist").select("*").eq("user_id",user.id).order("added_at",{ascending:false}),
+      ]);
+      setItems((i.data||[]).map(dbToItem));
+      setOutfits((o.data||[]).map(dbToOutfit));
+      setWishlist(w.data||[]);
+    } catch(e){ console.error(e); }
+    setDbLoading(false);
+  }
+
+  // Convert DB row → app format
+  function dbToItem(r){ return { id:r.id, category:r.category||"", subcategory:r.subcategory||"", name:r.name||"", color:r.color||"", size:r.size||"", material:r.material||"", whenBought:r.when_bought||"", price:r.price||"", condition:r.condition||"", location:r.location||"", status:r.status||"keep", notes:r.notes||"", customSellLink:r.custom_sell_link||"", customDonateLink:r.custom_donate_link||"", photo:r.photo||null }; }
+  function dbToOutfit(r){ return { id:r.id, name:r.name||"", occasion:r.occasion||"", season:r.season||"All Seasons", itemIds:r.item_ids||[], notes:r.notes||"", rating:r.rating||0 }; }
+
+  // Convert app format → DB row
+  function itemToDb(item){ return { id:item.id, user_id:user.id, category:item.category, subcategory:item.subcategory, name:item.name, color:item.color, size:item.size, material:item.material, when_bought:item.whenBought, price:item.price, condition:item.condition, location:item.location, status:item.status, notes:item.notes, custom_sell_link:item.customSellLink, custom_donate_link:item.customDonateLink, photo:item.photo }; }
+  function outfitToDb(o){ return { id:o.id, user_id:user.id, name:o.name, occasion:o.occasion, season:o.season, item_ids:o.itemIds, notes:o.notes, rating:o.rating }; }
+
   const flash = () => { setSaved(true); setTimeout(()=>setSaved(false),1500); };
   const stInfo = v => STATUS_OPTIONS.find(s=>s.value===v)||STATUS_OPTIONS[0];
 
@@ -105,38 +149,84 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // When category changes, reset subcategory
   const handleCategoryChange = (cat) => {
     setEditItem(p=>({...p, category:cat, subcategory:""}));
   };
 
+  // Auth
+  async function handleLogin() {
+    setAuthLoading(true); setAuthError("");
+    const {error} = await supabase.auth.signInWithPassword({email:authEmail, password:authPass});
+    if(error) setAuthError(error.message);
+    setAuthLoading(false);
+  }
+  async function handleSignup() {
+    setAuthLoading(true); setAuthError("");
+    const {error} = await supabase.auth.signUp({email:authEmail, password:authPass});
+    if(error) setAuthError(error.message);
+    else setAuthError("✅ Check your email to confirm your account, then log in!");
+    setAuthLoading(false);
+  }
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setItems([]); setOutfits([]); setWishlist([]);
+  }
+
+  // Item CRUD
   const openNewItem    = () => { setEditItem({...emptyItem}); setPage("inventory"); setView("form"); };
   const openEditItem   = it => { setEditItem({...it}); setView("form"); };
   const openDetailItem = it => { setSelItem(it); setView("detail"); };
-  const handleSaveItem = () => {
+
+  const handleSaveItem = async () => {
     if(!editItem.name.trim()) return;
-    saveItems(editItem.id ? items.map(i=>i.id===editItem.id?{...editItem}:i) : [{...editItem,id:uid()},...items]);
+    const isNew = !editItem.id;
+    const item = isNew ? {...editItem, id:uid()} : {...editItem};
+    const newItems = isNew ? [item,...items] : items.map(i=>i.id===item.id?item:i);
+    setItems(newItems);
+    await supabase.from("items").upsert(itemToDb(item));
     flash(); setView("grid");
   };
-  const handleDeleteItem = id => { saveItems(items.filter(i=>i.id!==id)); setView("grid"); };
-  const updateStatus = (id,status) => {
-    const n=items.map(i=>i.id===id?{...i,status}:i); saveItems(n);
+  const handleDeleteItem = async id => {
+    setItems(items.filter(i=>i.id!==id));
+    await supabase.from("items").delete().eq("id",id);
+    setView("grid");
+  };
+  const updateStatus = async (id,status) => {
+    const n=items.map(i=>i.id===id?{...i,status}:i); setItems(n);
     if(selItem?.id===id) setSelItem(p=>({...p,status}));
+    await supabase.from("items").update({status}).eq("id",id);
   };
 
+  // Outfit CRUD
   const openNewOutfit    = () => { setEditOutfit({...emptyOutfit}); setPage("outfits"); setView("outfitForm"); };
   const openEditOutfit   = o  => { setEditOutfit({...o}); setView("outfitForm"); };
   const openDetailOutfit = o  => { setSelOutfit(o); setView("outfitDetail"); };
-  const handleSaveOutfit = () => {
+  const handleSaveOutfit = async () => {
     if(!editOutfit.name.trim()) return;
-    saveOutfits(editOutfit.id ? outfits.map(o=>o.id===editOutfit.id?{...editOutfit}:o) : [{...editOutfit,id:uid()},...outfits]);
+    const isNew = !editOutfit.id;
+    const outfit = isNew ? {...editOutfit, id:uid()} : {...editOutfit};
+    const newOutfits = isNew ? [outfit,...outfits] : outfits.map(o=>o.id===outfit.id?outfit:o);
+    setOutfits(newOutfits);
+    await supabase.from("outfits").upsert(outfitToDb(outfit));
     flash(); setView("outfitGrid");
   };
-  const handleDeleteOutfit = id => { saveOutfits(outfits.filter(o=>o.id!==id)); setView("outfitGrid"); };
+  const handleDeleteOutfit = async id => {
+    setOutfits(outfits.filter(o=>o.id!==id));
+    await supabase.from("outfits").delete().eq("id",id);
+    setView("outfitGrid");
+  };
   const toggleOutfitItem = id => setEditOutfit(p=>({...p, itemIds: p.itemIds.includes(id) ? p.itemIds.filter(x=>x!==id) : [...p.itemIds,id]}));
 
-  const addToWishlist = r => { saveWishlist([{...r,id:uid(),addedAt:new Date().toISOString()},...wishlist]); };
-  const removeFromWishlist = id => { saveWishlist(wishlist.filter(w=>w.id!==id)); };
+  // Wishlist
+  const addToWishlist = async r => {
+    const entry = {...r, id:uid(), user_id:user.id, added_at:new Date().toISOString(), where_to_buy:r.where, price_range:r.priceRange, search_url:r.searchUrl};
+    setWishlist(p=>[entry,...p]);
+    await supabase.from("wishlist").insert({id:entry.id, user_id:user.id, title:r.title, description:r.description, price_range:r.priceRange, where_to_buy:r.where, search_url:r.searchUrl, tags:r.tags||[]});
+  };
+  const removeFromWishlist = async id => {
+    setWishlist(wishlist.filter(w=>w.id!==id));
+    await supabase.from("wishlist").delete().eq("id",id);
+  };
 
   const handleShopSearch = async () => {
     if(!shopQuery.trim()) return;
@@ -151,26 +241,103 @@ export default function App() {
     setShopLoading(false);
   };
 
-  // Filter logic — subcategory filter resets when category changes
-  const handleFilterCat = (cat) => {
-    setFilterCat(cat);
-    setFilterSub("All");
-  };
+  const handleFilterCat = (cat) => { setFilterCat(cat); setFilterSub("All"); };
 
   const filteredItems = items.filter(it => {
-    const mc = filterCat==="All" || it.category===filterCat;
-    const ms = filterSub==="All" || it.subcategory===filterSub;
-    const mst = filterStatus==="All" || it.status===filterStatus;
-    const mq = !searchQ || it.name.toLowerCase().includes(searchQ.toLowerCase())
-      || it.color?.toLowerCase().includes(searchQ.toLowerCase())
-      || it.category?.toLowerCase().includes(searchQ.toLowerCase())
-      || it.subcategory?.toLowerCase().includes(searchQ.toLowerCase());
-    return mc && ms && mst && mq;
+    return (filterCat==="All"||it.category===filterCat)
+      && (filterSub==="All"||it.subcategory===filterSub)
+      && (filterStatus==="All"||it.status===filterStatus)
+      && (!searchQ||it.name.toLowerCase().includes(searchQ.toLowerCase())||it.color?.toLowerCase().includes(searchQ.toLowerCase())||it.category?.toLowerCase().includes(searchQ.toLowerCase())||it.subcategory?.toLowerCase().includes(searchQ.toLowerCase()));
   });
 
   const backView = page==="outfits" ? "outfitGrid" : "grid";
   const activeSubs = filterCat !== "All" && SUBCATEGORIES[filterCat] ? SUBCATEGORIES[filterCat] : [];
 
+  // ── LOADING SCREEN ──
+  if(checkingAuth) return (
+    <div style={{minHeight:"100vh",background:G.bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,color:G.gold,marginBottom:16}}>MAISON</div>
+        <div style={{width:36,height:36,border:`3px solid ${G.border}`,borderTopColor:G.gold,borderRadius:"50%",animation:"sp 1s linear infinite",margin:"0 auto"}}/>
+        <style>{`@keyframes sp{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    </div>
+  );
+
+  // ── LOGIN / SIGNUP SCREEN ──
+  if(!user) return (
+    <div style={{minHeight:"100vh",background:G.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'Jost',sans-serif"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0}
+        .btn{cursor:pointer;border:none;border-radius:7px;font-family:'Jost',sans-serif;font-weight:500;transition:all .18s}
+        .btn:hover{opacity:.82;transform:translateY(-1px)}
+        .inp{background:#161412;border:1px solid #2c2822;color:#f0ede8;border-radius:8px;padding:12px 16px;font-family:'Jost',sans-serif;font-size:14px;width:100%;transition:border .18s;outline:none}
+        .inp:focus{border-color:#c9a96e}
+        .inp::placeholder{color:#5a5550}
+        @keyframes sp{to{transform:rotate(360deg)}}
+      `}</style>
+      <div style={{width:"100%",maxWidth:400}}>
+        {/* Logo */}
+        <div style={{textAlign:"center",marginBottom:40}}>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:700,color:G.gold,letterSpacing:2}}>MAISON</div>
+          <div style={{fontSize:11,color:G.dim,letterSpacing:"3px",marginTop:4}}>PERSONAL INVENTORY</div>
+        </div>
+
+        {/* Card */}
+        <div style={{background:G.card,border:`1px solid ${G.border}`,borderRadius:16,padding:32}}>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,marginBottom:6,textAlign:"center"}}>
+            {authView==="login"?"Welcome Back":"Create Account"}
+          </div>
+          <div style={{fontSize:12,color:G.dim,textAlign:"center",marginBottom:24}}>
+            {authView==="login"?"Sign in to access your inventory":"Sign up to get started — it's free"}
+          </div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div>
+              <div style={{fontSize:10,color:G.dim,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6}}>Email</div>
+              <input className="inp" type="email" placeholder="you@example.com" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(authView==="login"?handleLogin():handleSignup())}/>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:G.dim,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6}}>Password</div>
+              <input className="inp" type="password" placeholder="••••••••" value={authPass} onChange={e=>setAuthPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(authView==="login"?handleLogin():handleSignup())}/>
+            </div>
+
+            {authError&&(
+              <div style={{fontSize:12,color:authError.startsWith("✅")?G.green:G.red,background:authError.startsWith("✅")?"#182818":"#3a1e1e",border:`1px solid ${authError.startsWith("✅")?"#2a4a2a":"#6b2020"}`,borderRadius:8,padding:"10px 14px",lineHeight:1.5}}>
+                {authError}
+              </div>
+            )}
+
+            <button className="btn" onClick={authView==="login"?handleLogin:handleSignup} disabled={authLoading}
+              style={{background:G.gold,color:"#0c0b0a",padding:"13px",fontSize:14,fontWeight:700,marginTop:4,opacity:authLoading?.7:1}}>
+              {authLoading?(
+                <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                  <span style={{width:16,height:16,border:`2px solid #0c0b0a44`,borderTopColor:"#0c0b0a",borderRadius:"50%",display:"inline-block",animation:"sp 1s linear infinite"}}/>
+                  {authView==="login"?"Signing in…":"Creating account…"}
+                </span>
+              ):authView==="login"?"Sign In →":"Create Account →"}
+            </button>
+          </div>
+
+          <div style={{textAlign:"center",marginTop:20,fontSize:13,color:G.muted}}>
+            {authView==="login"?(
+              <>Don't have an account?{" "}
+                <span onClick={()=>{setAuthView("signup");setAuthError("");}} style={{color:G.gold,cursor:"pointer",fontWeight:600}}>Sign up</span>
+              </>
+            ):(
+              <>Already have an account?{" "}
+                <span onClick={()=>{setAuthView("login");setAuthError("");}} style={{color:G.gold,cursor:"pointer",fontWeight:600}}>Sign in</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div style={{textAlign:"center",marginTop:20,fontSize:11,color:G.dim}}>Your data is private and secure 🔒</div>
+      </div>
+    </div>
+  );
+
+  // ── MAIN APP ──
   return (
     <div style={{minHeight:"100vh",background:G.bg,color:G.text,fontFamily:"'Jost',sans-serif"}}>
       <style>{`
@@ -205,7 +372,7 @@ export default function App() {
         .photo-upload:hover{border-color:${G.gold};background:${G.surface}}
         .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.95);display:flex;align-items:center;justify-content:center;z-index:300;cursor:zoom-out}
         .lightbox img{max-width:92vw;max-height:92vh;border-radius:8px;object-fit:contain}
-        .subcat-bar{display:flex;gap:6px;flex-wrap:wrap;padding:10px 24px;background:${G.surface};border-bottom:1px solid ${G.border};animation:sld .2s ease}
+        .subcat-bar{display:flex;gap:6px;flex-wrap:wrap;padding:10px 24px;background:${G.surface};border-bottom:1px solid ${G.border}}
       `}</style>
 
       {/* NAV */}
@@ -226,11 +393,20 @@ export default function App() {
           ))}
           {page==="inventory"&&view==="grid"&&<button className="btn" onClick={openNewItem} style={{background:G.gold,color:"#0c0b0a",padding:"8px 20px",fontSize:12,fontWeight:700}}>+ Add Item</button>}
           {page==="outfits"&&(view==="outfitGrid"||view==="grid")&&<button className="btn" onClick={openNewOutfit} style={{background:G.gold,color:"#0c0b0a",padding:"8px 20px",fontSize:12,fontWeight:700}}>+ Outfit</button>}
+          <button className="btn" onClick={handleLogout} style={{background:G.card,color:G.muted,padding:"7px 14px",fontSize:11,border:`1px solid ${G.border}`}}>Sign Out</button>
         </div>
       </nav>
 
+      {/* DB LOADING */}
+      {dbLoading&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"14px",background:G.surface,borderBottom:`1px solid ${G.border}`,fontSize:13,color:G.muted}}>
+          <div className="spin" style={{width:16,height:16,border:`2px solid ${G.border}`,borderTopColor:G.gold,borderRadius:"50%"}}/>
+          Loading your inventory…
+        </div>
+      )}
+
       {/* STATS */}
-      {page==="inventory"&&view==="grid"&&(
+      {page==="inventory"&&view==="grid"&&!dbLoading&&(
         <div style={{display:"flex",gap:10,padding:"14px 24px",overflowX:"auto",borderBottom:`1px solid ${G.surface}`}}>
           {[{l:"Total",v:items.length},{l:"Sell",v:items.filter(i=>i.status==="sell").length,c:G.orange},{l:"Donate",v:items.filter(i=>i.status==="donate").length,c:G.blue},{l:"Keep",v:items.filter(i=>i.status==="keep").length,c:G.green},{l:"Est. Value",v:"$"+items.filter(i=>i.price).reduce((a,i)=>a+(parseFloat(i.price)||0),0).toLocaleString()},{l:"Outfits",v:outfits.length,c:G.purple}].map(s=>(
             <div key={s.l} style={{background:G.card,border:`1px solid ${G.border}`,borderRadius:10,padding:"12px 18px",textAlign:"center",minWidth:88,flex:"0 0 auto"}}>
@@ -244,36 +420,29 @@ export default function App() {
       {/* INVENTORY GRID */}
       {page==="inventory"&&view==="grid"&&(
         <div className="slide">
-          {/* Main filters */}
           <div style={{display:"flex",gap:8,flexWrap:"wrap",padding:"16px 24px 10px",alignItems:"center"}}>
             <input className="inp" placeholder="🔍 Search..." value={searchQ} onChange={e=>setSearchQ(e.target.value)} style={{width:170}}/>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {["All",...CATEGORIES].map(c=>(
-                <button key={c} className="tab" onClick={()=>handleFilterCat(c)}
-                  style={{background:filterCat===c?G.gold:G.card,color:filterCat===c?"#0c0b0a":G.muted,border:`1px solid ${filterCat===c?G.gold:G.border}`,padding:"5px 11px",fontSize:11}}>{c}</button>
+                <button key={c} className="tab" onClick={()=>handleFilterCat(c)} style={{background:filterCat===c?G.gold:G.card,color:filterCat===c?"#0c0b0a":G.muted,border:`1px solid ${filterCat===c?G.gold:G.border}`,padding:"5px 11px",fontSize:11}}>{c}</button>
               ))}
             </div>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {["All",...STATUS_OPTIONS.map(s=>s.value)].map(s=>(
-                <button key={s} className="tab" onClick={()=>setFilterStatus(s)}
-                  style={{background:filterStatus===s?G.gold:G.card,color:filterStatus===s?"#0c0b0a":G.muted,border:`1px solid ${filterStatus===s?G.gold:G.border}`,padding:"5px 11px",fontSize:11}}>
+                <button key={s} className="tab" onClick={()=>setFilterStatus(s)} style={{background:filterStatus===s?G.gold:G.card,color:filterStatus===s?"#0c0b0a":G.muted,border:`1px solid ${filterStatus===s?G.gold:G.border}`,padding:"5px 11px",fontSize:11}}>
                   {s==="All"?"All":STATUS_OPTIONS.find(o=>o.value===s)?.label}
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Subcategory filter bar — only shows when a category with subcategories is selected */}
           {activeSubs.length>0&&(
             <div className="subcat-bar">
               <span style={{fontSize:10,color:G.dim,letterSpacing:"1px",textTransform:"uppercase",alignSelf:"center",marginRight:4}}>Filter:</span>
               {["All",...activeSubs].map(s=>(
-                <button key={s} className="subtab" onClick={()=>setFilterSub(s)}
-                  style={{background:filterSub===s?"#2a2520":G.card,color:filterSub===s?G.gold:G.muted,border:`1px solid ${filterSub===s?G.gold:G.border}`}}>{s}</button>
+                <button key={s} className="subtab" onClick={()=>setFilterSub(s)} style={{background:filterSub===s?"#2a2520":G.card,color:filterSub===s?G.gold:G.muted,border:`1px solid ${filterSub===s?G.gold:G.border}`}}>{s}</button>
               ))}
             </div>
           )}
-
           <div style={{padding:"16px 24px"}}>
             {filteredItems.length===0?(
               <div style={{textAlign:"center",padding:"70px 20px",color:G.dim}}>
@@ -324,8 +493,6 @@ export default function App() {
           <div className="serif" style={{fontSize:26,fontWeight:700,marginBottom:4}}>{editItem.id?"Edit Item":"Add New Item"}</div>
           <div style={{color:G.dim,fontSize:13,marginBottom:24}}>{editItem.id?"Update the details":"Catalog a new household item"}</div>
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
-
-            {/* PHOTO */}
             <div>
               <div className="lbl">Photo</div>
               <input ref={photoRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{display:"none"}}/>
@@ -345,8 +512,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            {/* CATEGORY + SUBCATEGORY */}
             <div className="g2">
               <div>
                 <div className="lbl">Category *</div>
@@ -356,20 +521,14 @@ export default function App() {
                 </select>
               </div>
               <div>
-                <div className="lbl">Subcategory {SUBCATEGORIES[editItem.category]?"":"(select a category first)"}</div>
-                <select className="inp" value={editItem.subcategory} onChange={e=>setEditItem(p=>({...p,subcategory:e.target.value}))}
-                  disabled={!SUBCATEGORIES[editItem.category]}>
+                <div className="lbl">Subcategory</div>
+                <select className="inp" value={editItem.subcategory} onChange={e=>setEditItem(p=>({...p,subcategory:e.target.value}))} disabled={!SUBCATEGORIES[editItem.category]}>
                   <option value="">Select subcategory...</option>
                   {(SUBCATEGORIES[editItem.category]||[]).map(s=><option key={s}>{s}</option>)}
                 </select>
               </div>
             </div>
-
-            <div>
-              <div className="lbl">Item Name *</div>
-              <input className="inp" placeholder="e.g. Floral Wrap Dress" value={editItem.name} onChange={e=>setEditItem(p=>({...p,name:e.target.value}))}/>
-            </div>
-
+            <div><div className="lbl">Item Name *</div><input className="inp" placeholder="e.g. Floral Wrap Dress" value={editItem.name} onChange={e=>setEditItem(p=>({...p,name:e.target.value}))}/></div>
             <div className="g3">
               <div><div className="lbl">Color</div><input className="inp" placeholder="Navy Blue" value={editItem.color} onChange={e=>setEditItem(p=>({...p,color:e.target.value}))}/></div>
               <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42, 10L" value={editItem.size} onChange={e=>setEditItem(p=>({...p,size:e.target.value}))}/></div>
@@ -681,10 +840,10 @@ export default function App() {
                   <div key={w.id} className="card" style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
                     <div style={{flex:1,minWidth:160}}>
                       <div className="serif" style={{fontSize:15,fontWeight:600,marginBottom:2}}>{w.title}</div>
-                      <div style={{fontSize:11,color:G.muted}}>{w.where} · {w.priceRange}</div>
+                      <div style={{fontSize:11,color:G.muted}}>{w.where_to_buy||w.where} · {w.price_range||w.priceRange}</div>
                     </div>
                     <div style={{display:"flex",gap:8}}>
-                      <a href={w.searchUrl||`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(w.title)}`} target="_blank" rel="noreferrer" style={{textDecoration:"none"}}>
+                      <a href={w.search_url||w.searchUrl||`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(w.title)}`} target="_blank" rel="noreferrer" style={{textDecoration:"none"}}>
                         <button className="btn" style={{background:G.gold,color:"#0c0b0a",padding:"6px 14px",fontSize:11,fontWeight:700}}>Shop →</button>
                       </a>
                       <button className="btn" onClick={()=>removeFromWishlist(w.id)} style={{background:"#3a1e1e",color:G.red,padding:"6px 12px",fontSize:11,border:"1px solid #6b2020"}}>Remove</button>
