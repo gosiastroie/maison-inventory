@@ -45,23 +45,10 @@ const OUTFIT_OCCASIONS = ["Casual","Work","Evening","Sport","Travel","Formal","W
 const SEASONS = ["All Seasons","Spring","Summer","Autumn","Winter"];
 
 const G = {
-  bg:"#f2ebe0",
-  surface:"#ede3d4",
-  card:"#faf6ef",
-  border:"#d9c9b0",
-  gold:"#b5763a",
-  accent:"#c1603a",
-  text:"#3d2e1e",
-  muted:"#7a6248",
-  dim:"#a89070",
-  green:"#6dab7a",
-  orange:"#d4845a",
-  blue:"#5a8fb5",
-  purple:"#9b7fc4",
-  yellow:"#c9a04a",
-  red:"#c46a5a",
-  terracotta:"#c1603a",
-  cream:"#fdf8f0",
+  bg:"#f2ebe0", surface:"#ede3d4", card:"#faf6ef", border:"#d9c9b0",
+  gold:"#b5763a", accent:"#c1603a", text:"#3d2e1e", muted:"#7a6248", dim:"#a89070",
+  green:"#6dab7a", orange:"#d4845a", blue:"#5a8fb5", purple:"#9b7fc4",
+  yellow:"#c9a04a", red:"#c46a5a", terracotta:"#c1603a", cream:"#fdf8f0",
 };
 
 const emptyItem   = { id:null,category:"",subcategory:"",name:"",color:"",size:"",material:"",whenBought:"",price:"",condition:"",location:"",status:"keep",notes:"",customSellLink:"",customDonateLink:"",photo:null };
@@ -80,34 +67,35 @@ async function callClaude(messages, system="") {
 }
 
 export default function App() {
-  const [user,       setUser]       = useState(null);
-  const [authView,   setAuthView]   = useState("login");
-  const [authEmail,  setAuthEmail]  = useState("");
-  const [authPass,   setAuthPass]   = useState("");
-  const [authError,  setAuthError]  = useState("");
-  const [authLoading,setAuthLoading]= useState(false);
-  const [checkingAuth,setCheckingAuth]=useState(true);
-  const [items,      setItems]      = useState([]);
-  const [outfits,    setOutfits]    = useState([]);
-  const [page,       setPage]       = useState("inventory");
-  const [view,       setView]       = useState("grid");
-  const [editItem,   setEditItem]   = useState({...emptyItem});
-  const [selItem,    setSelItem]    = useState(null);
-  const [editOutfit, setEditOutfit] = useState({...emptyOutfit});
-  const [selOutfit,  setSelOutfit]  = useState(null);
+  const [user,         setUser]         = useState(null);
+  const [authView,     setAuthView]     = useState("login");
+  const [authEmail,    setAuthEmail]    = useState("");
+  const [authPass,     setAuthPass]     = useState("");
+  const [authError,    setAuthError]    = useState("");
+  const [authLoading,  setAuthLoading]  = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [items,        setItems]        = useState([]);
+  const [outfits,      setOutfits]      = useState([]);
+  const [page,         setPage]         = useState("inventory");
+  const [view,         setView]         = useState("grid");
+  const [editItem,     setEditItem]     = useState({...emptyItem});
+  const [selItem,      setSelItem]      = useState(null);
+  const [editOutfit,   setEditOutfit]   = useState({...emptyOutfit});
+  const [selOutfit,    setSelOutfit]    = useState(null);
   const [filterCat,    setFilterCat]    = useState("All");
   const [filterSub,    setFilterSub]    = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
-  const [searchQ,    setSearchQ]    = useState("");
-  const [linksModal, setLinksModal] = useState(null);
-  const [shopQuery,  setShopQuery]  = useState("");
-  const [shopResults,setShopResults]= useState([]);
-  const [shopLoading,setShopLoading]= useState(false);
-  const [shopError,  setShopError]  = useState("");
-  const [wishlist,   setWishlist]   = useState([]);
-  const [saved,      setSaved]      = useState(false);
-  const [lightbox,   setLightbox]   = useState(null);
-  const [dbLoading,  setDbLoading]  = useState(false);
+  const [searchQ,      setSearchQ]      = useState("");
+  const [linksModal,   setLinksModal]   = useState(null);
+  const [shopQuery,    setShopQuery]    = useState("");
+  const [shopResults,  setShopResults]  = useState([]);
+  const [shopLoading,  setShopLoading]  = useState(false);
+  const [shopError,    setShopError]    = useState("");
+  const [wishlist,     setWishlist]     = useState([]);
+  const [saved,        setSaved]        = useState(false);
+  const [lightbox,     setLightbox]     = useState(null);
+  const [dbLoading,    setDbLoading]    = useState(false);
+  const [photoAnalyzing, setPhotoAnalyzing] = useState(false);
   const photoRef = useRef();
 
   useEffect(()=>{
@@ -142,14 +130,82 @@ export default function App() {
 
   const flash = () => { setSaved(true); setTimeout(()=>setSaved(false),1500); };
   const stInfo = v => STATUS_OPTIONS.find(s=>s.value===v)||STATUS_OPTIONS[0];
+  const handleCategoryChange = cat => setEditItem(p=>({...p,category:cat,subcategory:""}));
 
-  const handlePhoto = (e) => {
-    const file=e.target.files[0]; if(!file) return;
-    const reader=new FileReader();
-    reader.onload=(ev)=>setEditItem(p=>({...p,photo:ev.target.result}));
+  // ── AI PHOTO ANALYSIS ──
+  const handlePhoto = async (e) => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const base64 = ev.target.result;
+      setEditItem(p=>({...p, photo:base64}));
+      setPhotoAnalyzing(true);
+      try {
+        const base64Data = base64.split(",")[1];
+        const mediaType = file.type || "image/jpeg";
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({
+            model:"claude-sonnet-4-20250514",
+            max_tokens:600,
+            messages:[{
+              role:"user",
+              content:[
+                { type:"image", source:{ type:"base64", media_type:mediaType, data:base64Data }},
+                { type:"text", text:`You are an expert at identifying clothing, accessories, shoes, bags and household items from photos. Analyze this photo carefully and return ONLY a valid JSON object with NO markdown and NO explanation.
+
+JSON format:
+{
+  "category": "",
+  "subcategory": "",
+  "color": "",
+  "size": "",
+  "material": "",
+  "condition": "",
+  "notes": ""
+}
+
+Rules:
+- category: choose ONLY from: ${CATEGORIES.join(", ")}
+- subcategory: choose from the correct list:
+  Clothing: ${SUBCATEGORIES.Clothing.join(", ")}
+  Shoes: ${SUBCATEGORIES.Shoes.join(", ")}
+  Bags: ${SUBCATEGORIES.Bags.join(", ")}
+  Accessories: ${SUBCATEGORIES.Accessories.join(", ")}
+  Electronics: ${SUBCATEGORIES.Electronics.join(", ")}
+  Furniture: ${SUBCATEGORIES.Furniture.join(", ")}
+  Kitchenware: ${SUBCATEGORIES.Kitchenware.join(", ")}
+  Sports: ${SUBCATEGORIES.Sports.join(", ")}
+- color: describe primary color in 1-3 words e.g. "Navy Blue", "Cream White", "Terracotta Orange"
+- size: if a label or size is visible include it. For clothing guess from visual e.g. "S","M","L". For shoes guess size range e.g. "7-9". Leave empty if impossible to tell.
+- material: identify fabric or material e.g. "Cotton","Leather","Denim","Silk","Wool","Polyester","Linen". Guess from texture and appearance.
+- condition: choose ONLY from: Excellent, Good, Fair, Poor. Judge from visible wear, fading, damage.
+- notes: write 1-3 sentences including any visible brand name or logo, style details, pattern, notable features. Example: "Zara floral wrap dress with V-neckline and tie waist. Light summer fabric with pink and white floral print. No visible damage."
+- If you truly cannot determine a value, use empty string ""`
+              }
+            ]}
+          })
+        });
+        const data = await response.json();
+        const text = data.content?.map(b=>b.text||"").join("")||"";
+        const clean = text.replace(/```json|```/g,"").trim();
+        const detected = JSON.parse(clean);
+        setEditItem(p=>({
+          ...p,
+          category:    detected.category    || p.category,
+          subcategory: detected.subcategory || p.subcategory,
+          color:       detected.color       || p.color,
+          size:        detected.size        || p.size,
+          material:    detected.material    || p.material,
+          condition:   detected.condition   || p.condition,
+          notes:       detected.notes       || p.notes,
+        }));
+      } catch(err) { console.error("Photo analysis failed:", err); }
+      setPhotoAnalyzing(false);
+    };
     reader.readAsDataURL(file);
   };
-  const handleCategoryChange = cat => setEditItem(p=>({...p,category:cat,subcategory:""}));
 
   async function handleLogin() {
     setAuthLoading(true); setAuthError("");
@@ -256,7 +312,7 @@ export default function App() {
 
   // ── LOGIN ──
   if(!user) return (
-    <div style={{minHeight:"100vh",background:`linear-gradient(135deg, #f5ede0 0%, #ead5bc 40%, #e8c9a8 100%)`,display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'Jost',sans-serif"}}>
+    <div style={{minHeight:"100vh",background:`linear-gradient(135deg,#f5ede0 0%,#ead5bc 40%,#e8c9a8 100%)`,display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'Jost',sans-serif"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -269,10 +325,8 @@ export default function App() {
         @keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
       `}</style>
       <div style={{width:"100%",maxWidth:420,animation:"fadeIn .5s ease"}}>
-        {/* Decorative circles */}
         <div style={{position:"fixed",top:-60,right:-60,width:220,height:220,borderRadius:"50%",background:"rgba(193,96,58,.12)",pointerEvents:"none"}}/>
         <div style={{position:"fixed",bottom:-40,left:-40,width:160,height:160,borderRadius:"50%",background:"rgba(181,118,58,.15)",pointerEvents:"none"}}/>
-
         <div style={{textAlign:"center",marginBottom:36}}>
           <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:70,height:70,borderRadius:"50%",background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,marginBottom:16,boxShadow:"0 8px 24px rgba(193,96,58,.35)"}}>
             <span style={{fontSize:30}}>🏡</span>
@@ -280,7 +334,6 @@ export default function App() {
           <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:34,fontWeight:700,color:G.text,letterSpacing:1}}>MAISON</div>
           <div style={{fontSize:11,color:G.muted,letterSpacing:"3px",marginTop:4}}>PERSONAL INVENTORY</div>
         </div>
-
         <div style={{background:"rgba(255,255,255,.75)",backdropFilter:"blur(12px)",border:`1px solid rgba(255,255,255,.9)`,borderRadius:20,padding:32,boxShadow:"0 20px 60px rgba(139,90,43,.15)"}}>
           <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,marginBottom:4,textAlign:"center",color:G.text}}>
             {authView==="login"?"Welcome Back 👋":"Create Your Account"}
@@ -288,14 +341,13 @@ export default function App() {
           <div style={{fontSize:12,color:G.muted,textAlign:"center",marginBottom:24}}>
             {authView==="login"?"Sign in to your personal catalog":"Free forever · Private & secure"}
           </div>
-
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <div>
-              <div style={{fontSize:10,color:G.muted,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6,fontFamily:"'Jost',sans-serif"}}>Email</div>
+              <div style={{fontSize:10,color:G.muted,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6}}>Email</div>
               <input className="inp" type="email" placeholder="you@example.com" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(authView==="login"?handleLogin():handleSignup())}/>
             </div>
             <div>
-              <div style={{fontSize:10,color:G.muted,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6,fontFamily:"'Jost',sans-serif"}}>Password</div>
+              <div style={{fontSize:10,color:G.muted,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6}}>Password</div>
               <input className="inp" type="password" placeholder="••••••••" value={authPass} onChange={e=>setAuthPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(authView==="login"?handleLogin():handleSignup())}/>
             </div>
             {authError&&(
@@ -313,16 +365,11 @@ export default function App() {
               ):authView==="login"?"Sign In →":"Create Account →"}
             </button>
           </div>
-
           <div style={{textAlign:"center",marginTop:20,fontSize:13,color:G.muted}}>
             {authView==="login"?(
-              <>Don't have an account?{" "}
-                <span onClick={()=>{setAuthView("signup");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign up free</span>
-              </>
+              <>Don't have an account?{" "}<span onClick={()=>{setAuthView("signup");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign up free</span></>
             ):(
-              <>Already have an account?{" "}
-                <span onClick={()=>{setAuthView("login");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign in</span>
-              </>
+              <>Already have an account?{" "}<span onClick={()=>{setAuthView("login");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign in</span></>
             )}
           </div>
         </div>
@@ -347,7 +394,7 @@ export default function App() {
         .card{background:${G.card};border:1px solid ${G.border};border-radius:14px;overflow:hidden;box-shadow:0 2px 12px rgba(139,90,43,.08)}
         .hover-card{transition:all .22s;cursor:pointer}
         .hover-card:hover{border-color:${G.terracotta};transform:translateY(-3px);box-shadow:0 12px 32px rgba(139,90,43,.18)}
-        .lbl{font-size:10px;color:${G.muted};letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px;font-family:'Jost',sans-serif}
+        .lbl{font-size:10px;color:${G.muted};letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px}
         .tag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:600;letter-spacing:.5px}
         .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:600}
         .tab{cursor:pointer;padding:7px 16px;border-radius:24px;font-family:'Jost',sans-serif;font-size:12px;font-weight:500;transition:all .18s;border:1.5px solid transparent;white-space:nowrap}
@@ -374,9 +421,7 @@ export default function App() {
       {/* NAV */}
       <nav style={{background:`linear-gradient(135deg,#e8d5bc,#f0e4d0)`,borderBottom:`1px solid ${G.border}`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,flexWrap:"wrap",gap:10,boxShadow:"0 2px 12px rgba(139,90,43,.12)"}}>
         <div>
-          <div className="serif" style={{fontSize:24,fontWeight:700,color:G.text}}>
-            <span style={{color:G.terracotta}}>MAISON</span> <span style={{color:G.gold}}>INVENTORY</span>
-          </div>
+          <div className="serif" style={{fontSize:24,fontWeight:700,color:G.text}}><span style={{color:G.terracotta}}>MAISON</span> <span style={{color:G.gold}}>INVENTORY</span></div>
           <div style={{fontSize:10,color:G.muted,letterSpacing:"2px",marginTop:1}}>PERSONAL CATALOG 🏡</div>
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
@@ -389,12 +434,8 @@ export default function App() {
               {p==="inventory"?"🗂 Inventory":p==="outfits"?"👗 Outfits":"🛍 Shop"}
             </button>
           ))}
-          {page==="inventory"&&view==="grid"&&(
-            <button className="btn" onClick={openNewItem} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"8px 20px",fontSize:12,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>+ Add Item</button>
-          )}
-          {page==="outfits"&&(view==="outfitGrid"||view==="grid")&&(
-            <button className="btn" onClick={openNewOutfit} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"8px 20px",fontSize:12,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>+ Outfit</button>
-          )}
+          {page==="inventory"&&view==="grid"&&<button className="btn" onClick={openNewItem} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"8px 20px",fontSize:12,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>+ Add Item</button>}
+          {page==="outfits"&&(view==="outfitGrid"||view==="grid")&&<button className="btn" onClick={openNewOutfit} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"8px 20px",fontSize:12,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>+ Outfit</button>}
           <button className="btn" onClick={handleLogout} style={{background:"rgba(255,255,255,.6)",color:G.muted,padding:"7px 14px",fontSize:11,border:`1px solid ${G.border}`}}>Sign Out</button>
         </div>
       </nav>
@@ -434,9 +475,7 @@ export default function App() {
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {["All",...CATEGORIES].map(c=>(
                 <button key={c} className="tab" onClick={()=>handleFilterCat(c)}
-                  style={{background:filterCat===c?`linear-gradient(135deg,${G.terracotta},${G.gold})`:"rgba(255,255,255,.7)",color:filterCat===c?"#fff":G.muted,border:`1.5px solid ${filterCat===c?G.terracotta:G.border}`,padding:"5px 11px",fontSize:11}}>
-                  {c}
-                </button>
+                  style={{background:filterCat===c?`linear-gradient(135deg,${G.terracotta},${G.gold})`:"rgba(255,255,255,.7)",color:filterCat===c?"#fff":G.muted,border:`1.5px solid ${filterCat===c?G.terracotta:G.border}`,padding:"5px 11px",fontSize:11}}>{c}</button>
               ))}
             </div>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
@@ -453,9 +492,7 @@ export default function App() {
               <span style={{fontSize:10,color:G.muted,letterSpacing:"1px",textTransform:"uppercase",alignSelf:"center",marginRight:4}}>Filter:</span>
               {["All",...activeSubs].map(s=>(
                 <button key={s} className="subtab" onClick={()=>setFilterSub(s)}
-                  style={{background:filterSub===s?"rgba(193,96,58,.15)":"rgba(255,255,255,.6)",color:filterSub===s?G.terracotta:G.muted,border:`1px solid ${filterSub===s?G.terracotta:G.border}`}}>
-                  {s}
-                </button>
+                  style={{background:filterSub===s?"rgba(193,96,58,.15)":"rgba(255,255,255,.6)",color:filterSub===s?G.terracotta:G.muted,border:`1px solid ${filterSub===s?G.terracotta:G.border}`}}>{s}</button>
               ))}
             </div>
           )}
@@ -507,27 +544,58 @@ export default function App() {
       {page==="inventory"&&view==="form"&&(
         <div style={{maxWidth:700,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>{editItem.id?"Edit Item ✏️":"Add New Item ✨"}</div>
-          <div style={{color:G.muted,fontSize:13,marginBottom:24}}>{editItem.id?"Update the details below":"Catalog a new household item"}</div>
+          <div style={{color:G.muted,fontSize:13,marginBottom:24}}>{editItem.id?"Update the details below":"Take a photo and AI will fill in the details for you!"}</div>
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+            {/* PHOTO + AI */}
             <div>
-              <div className="lbl">Photo</div>
+              <div className="lbl">Photo 📷 <span style={{color:G.terracotta,fontWeight:600,textTransform:"none",letterSpacing:0,fontSize:11}}>— AI will auto-fill details from your photo!</span></div>
               <input ref={photoRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{display:"none"}}/>
               {editItem.photo?(
-                <div style={{position:"relative",borderRadius:12,overflow:"hidden",maxHeight:260}}>
-                  <img src={editItem.photo} alt="item" style={{width:"100%",maxHeight:260,objectFit:"cover",display:"block"}}/>
-                  <div style={{position:"absolute",top:10,right:10,display:"flex",gap:8}}>
-                    <button className="btn" onClick={()=>photoRef.current.click()} style={{background:"rgba(255,255,255,.85)",color:G.text,padding:"6px 12px",fontSize:11,fontWeight:600}}>📷 Change</button>
-                    <button className="btn" onClick={()=>setEditItem(p=>({...p,photo:null}))} style={{background:"rgba(196,106,90,.9)",color:"#fff",padding:"6px 12px",fontSize:11}}>✕</button>
-                  </div>
+                <div style={{position:"relative",borderRadius:12,overflow:"hidden",maxHeight:320}}>
+                  <img src={editItem.photo} alt="item" style={{width:"100%",maxHeight:320,objectFit:"cover",display:"block",filter:photoAnalyzing?"blur(3px)":"none",transition:"filter .3s"}}/>
+                  {photoAnalyzing&&(
+                    <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(242,235,224,.8)",gap:12}}>
+                      <div className="spin" style={{width:36,height:36,border:`3px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
+                      <div style={{fontSize:14,color:G.terracotta,fontWeight:700}}>✨ AI is analysing your photo…</div>
+                      <div style={{fontSize:12,color:G.muted}}>Detecting category, color, material & more</div>
+                    </div>
+                  )}
+                  {!photoAnalyzing&&(
+                    <div style={{position:"absolute",top:10,right:10,display:"flex",gap:8}}>
+                      <button className="btn" onClick={()=>photoRef.current.click()} style={{background:"rgba(255,255,255,.9)",color:G.text,padding:"6px 12px",fontSize:11,fontWeight:600}}>📷 Change</button>
+                      <button className="btn" onClick={()=>setEditItem(p=>({...p,photo:null}))} style={{background:"rgba(196,106,90,.9)",color:"#fff",padding:"6px 12px",fontSize:11}}>✕</button>
+                    </div>
+                  )}
+                  {!photoAnalyzing&&(editItem.category||editItem.color||editItem.material||editItem.condition)&&(
+                    <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"10px 12px",background:"rgba(253,248,240,.96)",borderTop:`1px solid ${G.border}`}}>
+                      <div style={{fontSize:11,color:G.terracotta,fontWeight:700,marginBottom:6}}>✨ AI auto-filled from your photo:</div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:editItem.notes?6:0}}>
+                        {editItem.category&&<span className="tag" style={{background:`${G.terracotta}18`,color:G.terracotta,fontSize:10}}>📁 {editItem.category}</span>}
+                        {editItem.subcategory&&<span className="tag" style={{background:`${G.gold}18`,color:G.gold,fontSize:10}}>🏷 {editItem.subcategory}</span>}
+                        {editItem.color&&<span className="tag" style={{background:`${G.green}18`,color:G.green,fontSize:10}}>🎨 {editItem.color}</span>}
+                        {editItem.material&&<span className="tag" style={{background:`${G.blue}18`,color:G.blue,fontSize:10}}>🧵 {editItem.material}</span>}
+                        {editItem.condition&&<span className="tag" style={{background:`${G.purple}18`,color:G.purple,fontSize:10}}>★ {editItem.condition}</span>}
+                        {editItem.size&&<span className="tag" style={{background:`${G.orange}18`,color:G.orange,fontSize:10}}>⌀ {editItem.size}</span>}
+                      </div>
+                      {editItem.notes&&<div style={{fontSize:11,color:G.muted,fontStyle:"italic",lineHeight:1.5}}>📝 {editItem.notes}</div>}
+                    </div>
+                  )}
                 </div>
               ):(
                 <div className="photo-upload" onClick={()=>photoRef.current.click()}>
-                  <div style={{fontSize:38,marginBottom:10}}>📷</div>
-                  <div style={{fontSize:13,color:G.muted,marginBottom:4,fontWeight:500}}>Tap to take a photo or upload from gallery</div>
-                  <div style={{fontSize:11,color:G.dim}}>Works with your phone camera too!</div>
+                  <div style={{fontSize:42,marginBottom:10}}>📷</div>
+                  <div style={{fontSize:14,color:G.text,marginBottom:4,fontWeight:600}}>Take a photo or upload from gallery</div>
+                  <div style={{fontSize:12,color:G.muted,marginBottom:4}}>✨ AI will automatically detect:</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center"}}>
+                    {["Category","Subcategory","Color","Material","Size","Condition","Brand & Notes"].map(t=>(
+                      <span key={t} className="tag" style={{background:`${G.terracotta}12`,color:G.terracotta,fontSize:10}}>{t}</span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
+
             <div className="g2">
               <div>
                 <div className="lbl">Category *</div>
@@ -544,18 +612,29 @@ export default function App() {
                 </select>
               </div>
             </div>
+
             <div><div className="lbl">Item Name *</div><input className="inp" placeholder="e.g. Floral Wrap Dress" value={editItem.name} onChange={e=>setEditItem(p=>({...p,name:e.target.value}))}/></div>
+
             <div className="g3">
               <div><div className="lbl">Color</div><input className="inp" placeholder="e.g. Terracotta" value={editItem.color} onChange={e=>setEditItem(p=>({...p,color:e.target.value}))}/></div>
               <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42, 10L" value={editItem.size} onChange={e=>setEditItem(p=>({...p,size:e.target.value}))}/></div>
               <div><div className="lbl">Material</div><input className="inp" placeholder="Cotton, Silk" value={editItem.material} onChange={e=>setEditItem(p=>({...p,material:e.target.value}))}/></div>
             </div>
+
             <div className="g3">
               <div><div className="lbl">When Bought</div><input className="inp" type="date" value={editItem.whenBought} onChange={e=>setEditItem(p=>({...p,whenBought:e.target.value}))}/></div>
               <div><div className="lbl">Price ($)</div><input className="inp" type="number" placeholder="0.00" value={editItem.price} onChange={e=>setEditItem(p=>({...p,price:e.target.value}))}/></div>
-              <div><div className="lbl">Condition</div><select className="inp" value={editItem.condition} onChange={e=>setEditItem(p=>({...p,condition:e.target.value}))}><option value="">Select...</option>{CONDITIONS.map(c=><option key={c}>{c}</option>)}</select></div>
+              <div>
+                <div className="lbl">Condition</div>
+                <select className="inp" value={editItem.condition} onChange={e=>setEditItem(p=>({...p,condition:e.target.value}))}>
+                  <option value="">Select...</option>
+                  {CONDITIONS.map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
             </div>
+
             <div><div className="lbl">Location in House</div><select className="inp" value={editItem.location} onChange={e=>setEditItem(p=>({...p,location:e.target.value}))}><option value="">Select...</option>{LOCATIONS.map(l=><option key={l}>{l}</option>)}</select></div>
+
             <div>
               <div className="lbl">Status / Decision</div>
               <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
@@ -567,11 +646,14 @@ export default function App() {
                 ))}
               </div>
             </div>
+
             <div className="g2">
               <div><div className="lbl">Sell Link</div><input className="inp" placeholder="https://..." value={editItem.customSellLink} onChange={e=>setEditItem(p=>({...p,customSellLink:e.target.value}))}/></div>
               <div><div className="lbl">Donate Link</div><input className="inp" placeholder="https://..." value={editItem.customDonateLink} onChange={e=>setEditItem(p=>({...p,customDonateLink:e.target.value}))}/></div>
             </div>
+
             <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Write anything about this item…" value={editItem.notes} onChange={e=>setEditItem(p=>({...p,notes:e.target.value}))}/></div>
+
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:4}}>
               {editItem.id&&<button className="btn" onClick={()=>handleDeleteItem(editItem.id)} style={{background:"#fdecea",color:G.red,padding:"9px 18px",fontSize:12,border:`1px solid ${G.red}44`,fontWeight:600}}>🗑 Delete</button>}
               <button className="btn" onClick={()=>setView("grid")} style={{background:"rgba(255,255,255,.8)",color:G.muted,padding:"9px 22px",fontSize:12,border:`1px solid ${G.border}`}}>Cancel</button>
@@ -617,7 +699,9 @@ export default function App() {
             </div>
             <div className="divider"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:22}}>
-              {[{l:"Color",v:item.color},{l:"Size",v:item.size},{l:"Material",v:item.material},{l:"Condition",v:item.condition},{l:"Location",v:item.location},
+              {[
+                {l:"Color",v:item.color},{l:"Size",v:item.size},{l:"Material",v:item.material},
+                {l:"Condition",v:item.condition},{l:"Location",v:item.location},
                 {l:"When Bought",v:item.whenBought?new Date(item.whenBought).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}):""},
                 {l:"Purchase Price",v:item.price?`$${parseFloat(item.price).toLocaleString()}`:"",gold:true},
               ].filter(d=>d.v).map(d=>(
@@ -839,7 +923,7 @@ export default function App() {
                       <div style={{fontSize:12,color:G.muted,lineHeight:1.6,marginBottom:12}}>{r.description}</div>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                         <div className="serif" style={{fontSize:16,color:G.gold,fontWeight:700}}>{r.priceRange}</div>
-                        <div style={{fontSize:11,color:G.dim,textAlign:"right"}}>{r.where}</div>
+                        <div style={{fontSize:11,color:G.dim}}>{r.where}</div>
                       </div>
                       <div style={{display:"flex",gap:8}}>
                         <a href={r.searchUrl||`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(r.title)}`} target="_blank" rel="noreferrer" style={{textDecoration:"none",flex:1}}>
