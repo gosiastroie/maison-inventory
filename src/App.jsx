@@ -17,6 +17,37 @@ const SUBCATEGORIES = {
   Kitchenware:["Cookware","Bakeware","Utensils","Appliances","Dinnerware","Glassware","Storage","Other"],
   Sports:["Gym Equipment","Outdoor","Water Sports","Team Sports","Cycling","Yoga","Other"],
 };
+
+// Map subcategory → friendly item type word
+const SUBCAT_TYPE = {
+  "Dresses":"Dress","Tops & Blouses":"Top","Sweaters":"Sweater","Tees & Tanks":"Top",
+  "Pants":"Pants","Jeans":"Jeans","Jackets & Coats":"Jacket","Skirts":"Skirt",
+  "Shorts":"Shorts","Blazers":"Blazer","Pajamas":"Pajamas","Activewear":"Activewear",
+  "Sweatshirts & Sweatpants":"Sweatshirt","Intimates":"Intimates","Swimwear":"Swimwear",
+  "Sneakers":"Sneakers","Heels":"Heels","Flats":"Flats","Boots":"Boots",
+  "Sandals":"Sandals","Loafers":"Loafers","Athletic":"Sneakers","Slippers":"Slippers",
+  "Mules":"Mules","Wedges":"Wedges","Handbags":"Bag","Tote Bags":"Tote",
+  "Backpacks":"Backpack","Clutches":"Clutch","Crossbody":"Crossbody Bag",
+  "Shoulder Bags":"Shoulder Bag","Wallets":"Wallet","Travel Bags":"Travel Bag",
+  "Jewelry":"Jewelry","Scarves":"Scarf","Hats":"Hat","Belts":"Belt",
+  "Sunglasses":"Sunglasses","Watches":"Watch","Hair Accessories":"Hair Accessory",
+  "Gloves":"Gloves","Phones":"Phone","Laptops":"Laptop","Tablets":"Tablet",
+  "TVs":"TV","Cameras":"Camera","Audio":"Speaker","Gaming":"Console",
+  "Wearables":"Wearable","Seating":"Chair","Tables":"Table","Storage":"Storage",
+  "Beds":"Bed","Desks":"Desk","Shelving":"Shelf","Outdoor":"Outdoor Furniture",
+  "Cookware":"Cookware","Bakeware":"Bakeware","Utensils":"Utensils",
+  "Appliances":"Appliance","Dinnerware":"Dinnerware","Glassware":"Glassware",
+  "Gym Equipment":"Equipment","Water Sports":"Equipment","Team Sports":"Equipment",
+  "Cycling":"Bike Gear","Yoga":"Yoga Mat",
+};
+
+const CAT_TYPE = {
+  "Clothing":"Item","Shoes":"Shoes","Bags":"Bag","Accessories":"Accessory",
+  "Electronics":"Device","Furniture":"Furniture","Books":"Book",
+  "Kitchenware":"Kitchen Item","Toys":"Toy","Sports":"Equipment",
+  "Jewelry":"Jewelry","Other":"Item",
+};
+
 const CONDITIONS   = ["Excellent","Good","Fair","Poor"];
 const STATUS_OPTIONS = [
   {value:"keep",   label:"Keep",   color:"#6dab7a",icon:"♡"},
@@ -57,87 +88,81 @@ function resizeImage(base64,maxSize=900){
   return new Promise(resolve=>{
     const img=new Image();
     img.onload=()=>{
-      const canvas=document.createElement("canvas");
+      const c=document.createElement("canvas");
       let w=img.width,h=img.height;
       if(w>h&&w>maxSize){h=(h*maxSize)/w;w=maxSize;}
       else if(h>maxSize){w=(w*maxSize)/h;h=maxSize;}
-      canvas.width=w;canvas.height=h;
-      canvas.getContext("2d").drawImage(img,0,0,w,h);
-      resolve(canvas.toDataURL("image/jpeg",0.82));
+      c.width=w;c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h);
+      resolve(c.toDataURL("image/jpeg",0.82));
     };
     img.src=base64;
   });
 }
 
-function buildAutoName(aiData,category,subcategory){
-  const cap=s=>s?s.split(" ").map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(" "):"";
-  let itemType=aiData.item_type||"";
-  if(!itemType){
-    if(subcategory){
-      const typeMap={"dresses":"Dress","tops & blouses":"Top","sweaters":"Sweater","tees & tanks":"Top","pants":"Pants","jeans":"Jeans","jackets & coats":"Jacket","skirts":"Skirt","shorts":"Shorts","blazers":"Blazer","pajamas":"Pajamas","activewear":"Top","sweatshirts & sweatpants":"Sweatshirt","intimates":"Bra","swimwear":"Swimsuit","sneakers":"Sneakers","heels":"Heels","flats":"Flats","boots":"Boots","sandals":"Sandals","loafers":"Loafers","athletic":"Sneakers","slippers":"Slippers","mules":"Mules","wedges":"Wedges","handbags":"Bag","tote bags":"Tote","backpacks":"Backpack","clutches":"Clutch","crossbody":"Crossbody","shoulder bags":"Bag","wallets":"Wallet","travel bags":"Travel Bag"};
-      itemType=typeMap[subcategory.toLowerCase()]||cap(subcategory.split(" &")[0]);
-    }else if(category){
-      const catMap={"clothing":"Item","shoes":"Shoes","bags":"Bag","accessories":"Accessory","electronics":"Device","furniture":"Furniture","kitchenware":"Item","jewelry":"Jewelry","sports":"Equipment"};
-      itemType=catMap[category.toLowerCase()]||cap(category);
-    }else{itemType="Item";}
-  }
-  const color=cap(aiData.color||"");
-  const material=cap(aiData.material||"");
-  const fit=cap(aiData.fit||"");
+// ── Smart name builder ──────────────────────────────────────────────────────
+function cap(s){return s?s.split(" ").map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(" "):""}
+
+function buildName(opts){
+  // opts: { color, material, fit, itemType, category, subcategory }
+  const itemType = opts.itemType
+    || SUBCAT_TYPE[opts.subcategory]
+    || CAT_TYPE[opts.category]
+    || "Item";
   const parts=[];
-  if(color) parts.push(color);
-  if(material&&material.length<12) parts.push(material);
-  else if(fit&&fit.length<12) parts.push(fit);
+  if(opts.color) parts.push(cap(opts.color));
+  // one optional descriptor — material first, then fit
+  const descriptor = opts.material || opts.fit || "";
+  if(descriptor && descriptor.length<=12) parts.push(cap(descriptor));
   parts.push(cap(itemType));
   return parts.filter(Boolean).join(" ");
 }
 
-async function analyzePhotoWithAI(base64){
-  const base64Data=base64.split(",")[1];
-  const response=await fetch("https://api.anthropic.com/v1/messages",{
+// ── AI photo analysis ───────────────────────────────────────────────────────
+async function analyzePhoto(base64){
+  const data64=base64.split(",")[1];
+  const res=await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
-      model:"claude-sonnet-4-20250514",max_tokens:500,
+      model:"claude-sonnet-4-20250514",max_tokens:400,
       messages:[{role:"user",content:[
-        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64Data}},
-        {type:"text",text:`Analyze this item and return ONLY valid JSON, no markdown:
+        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:data64}},
+        {type:"text",text:`Return ONLY valid JSON, no markdown:
 {
-  "item_type": "",
-  "color": "",
-  "material": "",
-  "fit": "",
-  "category": "",
-  "subcategory": "",
-  "size": "",
-  "condition": "",
-  "notes": ""
+  "item_type":"",
+  "color":"",
+  "material":"",
+  "fit":"",
+  "category":"",
+  "subcategory":"",
+  "size":"",
+  "condition":"",
+  "notes":""
 }
-- item_type: specific short name e.g. "jacket","dress","sneakers". REQUIRED.
-- color: primary color 1-2 words e.g. "Black","Navy Blue". REQUIRED.
-- material: only if confident e.g. "Leather","Cotton","Denim". Empty if unsure.
-- fit: only if visible e.g. "Oversized","Cropped","Slim". Empty if unsure.
-- category: Clothing,Shoes,Bags,Accessories,Electronics,Furniture,Books,Kitchenware,Toys,Sports,Jewelry,Other
-- subcategory for Clothing: Dresses,Tops & Blouses,Sweaters,Tees & Tanks,Pants,Jeans,Jackets & Coats,Skirts,Shorts,Blazers,Pajamas,Activewear,Sweatshirts & Sweatpants,Intimates,Swimwear
-- subcategory for Shoes: Sneakers,Heels,Flats,Boots,Sandals,Loafers,Athletic,Slippers,Mules,Wedges
-- subcategory for Bags: Handbags,Tote Bags,Backpacks,Clutches,Crossbody,Shoulder Bags,Wallets,Travel Bags
+- item_type: e.g. "jacket","dress","sneakers". Required.
+- color: primary color 1-2 words. Required.
+- material: only if confident e.g. "Leather","Cotton". Empty if unsure.
+- fit: only if visible e.g. "Oversized","Cropped". Empty if unsure.
+- category: one of Clothing,Shoes,Bags,Accessories,Electronics,Furniture,Books,Kitchenware,Toys,Sports,Jewelry,Other
+- subcategory: match to known list for the category
 - size: visible label or estimate. Empty if unknown.
-- condition: Excellent,Good,Fair,or Poor
-- notes: 1-2 sentences with brand if visible and key details`}
+- condition: Excellent,Good,Fair,Poor
+- notes: 1-2 sentences, include brand if visible`}
       ]}]
     })
   });
-  const data=await response.json();
-  if(data.error) throw new Error(data.error.message);
-  const text=data.content?.map(b=>b.text||"").join("")||"";
-  return JSON.parse(text.replace(/```json|```/g,"").trim());
+  const d=await res.json();
+  if(d.error) throw new Error(d.error.message);
+  const txt=d.content?.map(b=>b.text||"").join("")||"";
+  return JSON.parse(txt.replace(/```json|```/g,"").trim());
 }
 
 async function callClaude(messages,system=""){
   const body={model:"claude-sonnet-4-20250514",max_tokens:1000,messages};
   if(system) body.system=system;
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const data=await res.json();
-  return data.content?.map(b=>b.text||"").join("")||"";
+  const d=await res.json();
+  return d.content?.map(b=>b.text||"").join("")||"";
 }
 
 export default function App(){
@@ -170,12 +195,14 @@ export default function App(){
   const [lightbox,setLightbox]=useState(null);
   const [dbLoading,setDbLoading]=useState(false);
   const [advancedOpen,setAdvancedOpen]=useState(false);
-  // AI fast-capture
+
+  // AI capture state
   const [aiRunning,setAiRunning]=useState(false);
   const [aiDone,setAiDone]=useState(false);
-  const [aiError,setAiError]=useState("");
+  const [aiHint,setAiHint]=useState(""); // soft message, never blocking
   const [aiData,setAiData]=useState(null);
   const [nameUserEdited,setNameUserEdited]=useState(false);
+
   const cameraRef=useRef();
   const galleryRef=useRef();
 
@@ -210,60 +237,94 @@ export default function App(){
   const stInfo=v=>STATUS_OPTIONS.find(s=>s.value===v)||STATUS_OPTIONS[0];
   const toggleArr=(field,val)=>setEditItem(p=>({...p,[field]:p[field].includes(val)?p[field].filter(x=>x!==val):[...p[field],val]}));
 
+  // ── Auto-name logic ─────────────────────────────────────────────────────
+  // Call this whenever we have new info and user hasn't manually edited
+  function applyAutoName(patch, currentItem, ai){
+    if(nameUserEdited) return patch; // never overwrite user edits
+    const merged = {...currentItem,...patch};
+    const name = buildName({
+      color:    ai?.color    || merged.color,
+      material: ai?.material || merged.material,
+      fit:      ai?.fit,
+      itemType: ai?.item_type,
+      category: merged.category,
+      subcategory: merged.subcategory,
+    });
+    return {...patch, name};
+  }
+
+  // ── Category / subcategory change ───────────────────────────────────────
   const handleCategoryChange=cat=>{
-    setEditItem(p=>({...p,category:cat,subcategory:""}));
-    if(!nameUserEdited&&aiData){
-      const n=buildAutoName(aiData,cat,"");
-      setEditItem(p=>({...p,category:cat,subcategory:"",name:n}));
-    }
+    setEditItem(p=>{
+      const patch={category:cat,subcategory:""};
+      return {...p,...applyAutoName(patch,p,aiData)};
+    });
   };
   const handleSubcategoryChange=sub=>{
-    setEditItem(p=>({...p,subcategory:sub}));
-    if(!nameUserEdited&&aiData){
-      const n=buildAutoName(aiData,editItem.category,sub);
-      setEditItem(p=>({...p,subcategory:sub,name:n}));
-    }
+    setEditItem(p=>{
+      const patch={subcategory:sub};
+      return {...p,...applyAutoName(patch,p,aiData)};
+    });
   };
-  const handleNameChange=val=>{setNameUserEdited(true);setEditItem(p=>({...p,name:val}));};
+  const handleNameChange=val=>{
+    setNameUserEdited(true);
+    setEditItem(p=>({...p,name:val}));
+  };
   const regenerateName=()=>{
-    if(!aiData) return;
-    setEditItem(p=>({...p,name:buildAutoName(aiData,p.category,p.subcategory)}));
     setNameUserEdited(false);
+    setEditItem(p=>{
+      const name=buildName({
+        color:aiData?.color||p.color,material:aiData?.material||p.material,
+        fit:aiData?.fit,itemType:aiData?.item_type,
+        category:p.category,subcategory:p.subcategory,
+      });
+      return {...p,name};
+    });
   };
 
-  // ── FAST CAPTURE ──
+  // ── Photo handler ────────────────────────────────────────────────────────
   const handlePhotoFile=async(file)=>{
     if(!file) return;
-    setAiError("");setAiDone(false);setAiData(null);setNameUserEdited(false);
+    setAiHint("");setAiDone(false);setAiData(null);
+
     const reader=new FileReader();
     reader.onload=async(ev)=>{
+      // 1. Show photo immediately
       const resized=await resizeImage(ev.target.result,900);
-      setEditItem(p=>({...p,photo:resized,name:p.name||"Generating name…"}));
+
+      // 2. Set photo + immediate fallback name (using category/sub if available)
+      setEditItem(p=>{
+        const patch={photo:resized};
+        const immediateNamePatch=applyAutoName(patch,p,null);
+        return {...p,...immediateNamePatch};
+      });
+
+      // 3. Run AI in background — never blocks
       setAiRunning(true);
       try{
         const small=await resizeImage(ev.target.result,800);
-        const result=await analyzePhotoWithAI(small);
+        const result=await analyzePhoto(small);
         setAiData(result);
+
         setEditItem(p=>{
-          const cat=result.category||p.category;
-          const sub=result.subcategory||p.subcategory;
-          const autoName=buildAutoName(result,cat,sub);
-          return{
-            ...p,
-            category:cat,subcategory:sub,
-            color:result.color||p.color,
-            material:result.material||p.material,
-            size:result.size||p.size,
-            condition:result.condition||p.condition,
-            notes:result.notes||p.notes,
-            name:(!nameUserEdited||p.name==="Generating name…")?autoName:p.name,
+          const patch={
+            category:   result.category    || p.category,
+            subcategory:result.subcategory || p.subcategory,
+            color:      result.color       || p.color,
+            material:   result.material    || p.material,
+            size:       result.size        || p.size,
+            condition:  result.condition   || p.condition,
+            notes:      result.notes       || p.notes,
           };
+          // Auto-name using fresh AI data
+          return {...p,...applyAutoName(patch,p,result)};
         });
         setAiDone(true);
+        setAiHint("✨ We added what we can — adjust if needed.");
       }catch(err){
         console.error(err);
-        setAiError("AI couldn't analyse this photo — you can fill in details manually.");
-        setEditItem(p=>({...p,name:p.name==="Generating name…"?"":p.name}));
+        // Soft fallback — never blocking message
+        setAiHint("We added what we can — you can adjust if needed.");
       }
       setAiRunning(false);
     };
@@ -274,13 +335,24 @@ export default function App(){
   async function handleSignup(){setAuthLoading(true);setAuthError("");const{error}=await supabase.auth.signUp({email:authEmail,password:authPass});if(error)setAuthError(error.message);else setAuthError("✅ Check your email to confirm your account, then log in!");setAuthLoading(false);}
   async function handleLogout(){await supabase.auth.signOut();setItems([]);setOutfits([]);setWishlist([]);}
 
-  const openNewItem=()=>{setEditItem({...emptyItem});setAdvancedOpen(false);setAiRunning(false);setAiDone(false);setAiData(null);setAiError("");setNameUserEdited(false);setPage("inventory");setView("form");};
-  const openEditItem=it=>{setEditItem({...it});setAdvancedOpen(false);setAiRunning(false);setAiDone(false);setAiData(null);setAiError("");setNameUserEdited(true);setView("form");};
+  const openNewItem=()=>{
+    setEditItem({...emptyItem});setAdvancedOpen(false);
+    setAiRunning(false);setAiDone(false);setAiData(null);setAiHint("");setNameUserEdited(false);
+    setPage("inventory");setView("form");
+  };
+  const openEditItem=it=>{
+    setEditItem({...it});setAdvancedOpen(false);
+    setAiRunning(false);setAiDone(false);setAiData(null);setAiHint("");setNameUserEdited(true);
+    setView("form");
+  };
   const openDetailItem=it=>{setSelItem(it);setView("detail");};
+
   const handleSaveItem=async()=>{
-    if(!editItem.name.trim()||editItem.name==="Generating name…") return;
-    const isNew=!editItem.id;
-    const item=isNew?{...editItem,id:uid()}:{...editItem};
+    // Always ensure a name before saving
+    const finalName = editItem.name.trim() || buildName({category:editItem.category,subcategory:editItem.subcategory}) || "Item";
+    const itemToSave={...editItem,name:finalName};
+    const isNew=!itemToSave.id;
+    const item=isNew?{...itemToSave,id:uid()}:{...itemToSave};
     setItems(isNew?[item,...items]:items.map(i=>i.id===item.id?item:i));
     await supabase.from("items").upsert(itemToDb(item));
     flash();setView("grid");
@@ -371,20 +443,20 @@ export default function App(){
     .photo-btn{cursor:pointer;border:none;border-radius:10px;font-family:'Jost',sans-serif;font-weight:600;transition:all .18s;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 14px;flex:1}
     .photo-btn:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(193,96,58,.2)}
     .sbox{background:rgba(255,255,255,.5);border:1px solid ${G.border};border-radius:14px;padding:20px}
-    .stitle{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:700;color:${G.text};margin-bottom:16px;display:flex;align-items:center;gap:8px}
+    .stitle{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:700;color:${G.text};margin-bottom:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .tc{cursor:pointer;padding:6px 14px;border-radius:20px;font-family:'Jost',sans-serif;font-size:12px;font-weight:500;transition:all .18s;border:1.5px solid ${G.border};background:rgba(255,255,255,.7);color:${G.muted}}
     .tc.on{border-color:${G.terracotta};background:${G.terracotta}18;color:${G.terracotta};font-weight:700}
     .fav{cursor:pointer;background:none;border:none;font-size:22px;transition:transform .2s;line-height:1}
     .fav:hover{transform:scale(1.2)}
     .adv-toggle{cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(255,255,255,.5);border:1.5px dashed ${G.border};border-radius:10px;font-family:'Jost',sans-serif;font-size:13px;color:${G.muted};font-weight:600;transition:all .18s;width:100%}
     .adv-toggle:hover{border-color:${G.gold};color:${G.gold}}
-    .ai-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;background:${G.terracotta}15;border:1px solid ${G.terracotta}33;border-radius:20px;font-size:10px;color:${G.terracotta};font-weight:700}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-    .pulsing{animation:pulse 1.4s infinite;color:${G.dim};font-style:italic}
+    .ai-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;background:${G.terracotta}12;border:1px solid ${G.terracotta}30;border-radius:20px;font-size:10px;color:${G.terracotta};font-weight:600;font-family:'Jost',sans-serif}
+    .name-hint{font-size:11px;color:${G.muted};margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
   `;
 
   // ── LOADING ──
-  if(checkingAuth) return(
+  if(checkingAuth)return(
     <div style={{minHeight:"100vh",background:G.bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&display=swap');@keyframes sp{to{transform:rotate(360deg)}}`}</style>
       <div style={{textAlign:"center"}}>
@@ -396,7 +468,7 @@ export default function App(){
   );
 
   // ── LOGIN ──
-  if(!user) return(
+  if(!user)return(
     <div style={{minHeight:"100vh",background:`linear-gradient(135deg,#f5ede0 0%,#ead5bc 40%,#e8c9a8 100%)`,display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'Jost',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap');*{box-sizing:border-box;margin:0;padding:0}.btn{cursor:pointer;border:none;border-radius:8px;font-family:'Jost',sans-serif;font-weight:600;transition:all .18s}.btn:hover{opacity:.88;transform:translateY(-1px)}.inp{background:rgba(255,255,255,.7);border:1.5px solid ${G.border};color:${G.text};border-radius:8px;padding:12px 16px;font-family:'Jost',sans-serif;font-size:14px;width:100%;transition:border .18s;outline:none}.inp:focus{border-color:${G.terracotta};background:rgba(255,255,255,.95)}.inp::placeholder{color:${G.dim}}@keyframes sp{to{transform:rotate(360deg)}}@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div style={{width:"100%",maxWidth:420,animation:"fadeIn .5s ease"}}>
@@ -490,9 +562,7 @@ export default function App(){
                         <span className="chip" style={{background:st.color+"22",color:st.color}}>{st.icon} {st.label}</span>
                       </div>
                       <div className="serif" style={{fontSize:17,fontWeight:600,lineHeight:1.3,marginBottom:5,color:G.text}}>{item.name}</div>
-                      <div style={{fontSize:11,color:G.muted,display:"flex",gap:10,flexWrap:"wrap"}}>
-                        {item.color&&<span>● {item.color}</span>}{item.size&&<span>⌀ {item.size}</span>}{item.condition&&<span>★ {item.condition}</span>}
-                      </div>
+                      <div style={{fontSize:11,color:G.muted,display:"flex",gap:10,flexWrap:"wrap"}}>{item.color&&<span>● {item.color}</span>}{item.size&&<span>⌀ {item.size}</span>}{item.condition&&<span>★ {item.condition}</span>}</div>
                       {item.location&&<div style={{fontSize:11,color:G.dim,marginTop:6}}>📍 {item.location}</div>}
                       {item.actionNeeded&&item.actionNeeded!=="None"&&<div style={{fontSize:10,color:G.orange,marginTop:5,fontWeight:600}}>⚠️ {item.actionNeeded}</div>}
                       {item.price&&<div className="serif" style={{fontSize:15,color:G.gold,marginTop:6,fontWeight:700}}>${parseFloat(item.price).toLocaleString()}</div>}
@@ -507,13 +577,13 @@ export default function App(){
       )}
 
       {/* ══════════════════════════════════════
-          ITEM FORM — full form + smart capture
+          ITEM FORM
       ══════════════════════════════════════ */}
       {page==="inventory"&&view==="form"&&(
         <div style={{maxWidth:700,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>{editItem.id?"Edit Item ✏️":"Add New Item ✨"}</div>
           <div style={{color:G.muted,fontSize:13,marginBottom:24}}>
-            {editItem.id?"Update details below":"📸 Take a photo — AI auto-fills everything instantly!"}
+            {editItem.id?"Update details below":"📸 Take a photo — AI fills in the details automatically!"}
           </div>
 
           <div style={{display:"flex",flexDirection:"column",gap:20}}>
@@ -522,8 +592,14 @@ export default function App(){
             <div className="sbox">
               <div className="stitle">
                 <span>📸</span> Quick Add
-                {aiRunning&&<span className="ai-badge"><span className="spin" style={{width:10,height:10,border:`1.5px solid rgba(193,96,58,.3)`,borderTopColor:G.terracotta,borderRadius:"50%",display:"inline-block"}}/>Analysing…</span>}
-                {aiDone&&!aiRunning&&<span className="ai-badge">✨ AI filled</span>}
+                {/* AI status pill — purely informational, never blocking */}
+                {aiRunning&&(
+                  <span className="ai-pill">
+                    <span className="spin" style={{width:10,height:10,border:`1.5px solid rgba(193,96,58,.3)`,borderTopColor:G.terracotta,borderRadius:"50%",display:"inline-block"}}/>
+                    Analysing…
+                  </span>
+                )}
+                {aiDone&&!aiRunning&&<span className="ai-pill">✨ AI filled</span>}
               </div>
 
               {/* PHOTO */}
@@ -534,9 +610,15 @@ export default function App(){
                   <div style={{borderRadius:12,overflow:"hidden",border:`1px solid ${G.border}`,background:G.surface}}>
                     <div style={{position:"relative",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",minHeight:240,maxHeight:360}}>
                       <img src={editItem.photo} alt="item" style={{maxWidth:"100%",maxHeight:360,objectFit:"contain",display:"block"}}/>
-                      {aiRunning&&<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(242,235,224,.8)",gap:12,pointerEvents:"none"}}><div className="spin" style={{width:38,height:38,border:`3px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/><div style={{fontSize:14,color:G.terracotta,fontWeight:700}}>✨ Analysing your photo…</div><div style={{fontSize:12,color:G.muted}}>Detecting category, color, material & more</div></div>}
+                      {/* Subtle overlay while AI runs — does NOT block interaction */}
+                      {aiRunning&&(
+                        <div style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"rgba(242,235,224,.92)",borderRadius:20,padding:"6px 14px",display:"flex",alignItems:"center",gap:8,pointerEvents:"none"}}>
+                          <div className="spin" style={{width:14,height:14,border:`2px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
+                          <span style={{fontSize:12,color:G.terracotta,fontWeight:600}}>Analysing…</span>
+                        </div>
+                      )}
                     </div>
-                    {/* AI detected tags */}
+                    {/* AI detected tags — shown after AI finishes */}
                     {!aiRunning&&aiDone&&(editItem.category||editItem.color||editItem.material)&&(
                       <div style={{padding:"8px 12px",background:`${G.terracotta}10`,borderTop:`1px solid ${G.border}`}}>
                         <div style={{fontSize:11,color:G.terracotta,fontWeight:700,marginBottom:5}}>✨ AI detected:</div>
@@ -550,11 +632,16 @@ export default function App(){
                         </div>
                       </div>
                     )}
-                    {aiError&&<div style={{padding:"8px 12px",background:"#fdecea",fontSize:12,color:G.red}}>{aiError}</div>}
+                    {/* Soft hint — never an error message */}
+                    {aiHint&&!aiRunning&&(
+                      <div style={{padding:"7px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`,fontSize:11,color:G.muted}}>
+                        {aiHint}
+                      </div>
+                    )}
                     <div style={{display:"flex",gap:8,padding:"10px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`}}>
                       <button className="btn" onClick={()=>cameraRef.current.click()}  style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>📷 Camera</button>
                       <button className="btn" onClick={()=>galleryRef.current.click()} style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>🖼 Gallery</button>
-                      <button className="btn" onClick={()=>{setEditItem(p=>({...p,photo:null}));setAiDone(false);setAiData(null);setAiError("");}} style={{background:"#fdecea",color:G.red,padding:"8px 14px",fontSize:11,fontWeight:600,border:`1px solid ${G.red}33`}}>✕</button>
+                      <button className="btn" onClick={()=>{setEditItem(p=>({...p,photo:null}));setAiDone(false);setAiData(null);setAiHint("");}} style={{background:"#fdecea",color:G.red,padding:"8px 14px",fontSize:11,fontWeight:600,border:`1px solid ${G.red}33`}}>✕</button>
                     </div>
                   </div>
                 ):(
@@ -576,7 +663,7 @@ export default function App(){
                 )}
               </div>
 
-              {/* Category + Subcategory */}
+              {/* CATEGORY + SUBCATEGORY */}
               <div className="g2" style={{marginBottom:14}}>
                 <div>
                   <div className="lbl">Category *</div>
@@ -594,49 +681,55 @@ export default function App(){
                 </div>
               </div>
 
-              {/* Item Name — auto-generated */}
+              {/* ITEM NAME — always has a value, never empty */}
               <div style={{marginBottom:14}}>
-                <div className="lbl" style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                  Item Name *
-                  {aiRunning&&<span style={{fontSize:10,color:G.dim,fontStyle:"italic",textTransform:"none",letterSpacing:0}}>generating…</span>}
-                  {aiDone&&!aiRunning&&!nameUserEdited&&<span style={{fontSize:10,color:G.green,textTransform:"none",letterSpacing:0,fontWeight:700}}>✓ Auto-generated</span>}
-                  {nameUserEdited&&<span style={{fontSize:10,color:G.muted,textTransform:"none",letterSpacing:0}}>edited by you</span>}
-                </div>
+                <div className="lbl">Item Name</div>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <div style={{flex:1,position:"relative"}}>
-                    <input
-                      className="inp"
-                      placeholder="e.g. Black Leather Jacket"
-                      value={editItem.name==="Generating name…"?"":editItem.name}
-                      onChange={e=>handleNameChange(e.target.value)}
-                      style={{fontSize:14,fontWeight:600}}
-                    />
-                    {editItem.name==="Generating name…"&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",padding:"0 14px",pointerEvents:"none"}}><span className="pulsing" style={{fontSize:13}}>✨ Generating name…</span></div>}
-                  </div>
+                  <input
+                    className="inp"
+                    placeholder="e.g. Black Leather Jacket"
+                    value={editItem.name}
+                    onChange={e=>handleNameChange(e.target.value)}
+                    style={{flex:1,fontSize:14,fontWeight:600,
+                      borderColor: aiRunning ? G.gold+"88" : undefined,
+                      transition:"border-color .3s"
+                    }}
+                  />
                   <button className="fav" onClick={()=>setEditItem(p=>({...p,favorite:!p.favorite}))} title="Favorite">
                     {editItem.favorite?"⭐":"☆"}
                   </button>
                 </div>
-                {aiData&&!aiRunning&&nameUserEdited&&(
-                  <button className="btn" onClick={regenerateName} style={{marginTop:7,background:"rgba(255,255,255,.7)",color:G.terracotta,border:`1px solid ${G.terracotta}44`,padding:"5px 12px",fontSize:11,fontWeight:600}}>↩ Restore AI name</button>
-                )}
-                <div style={{fontSize:11,color:G.muted,marginTop:4}}>{editItem.favorite?"⭐ Marked as favorite":"☆ Tap star to mark as favorite"}</div>
+                {/* Subtle hint row below name — no error language */}
+                <div className="name-hint">
+                  {aiRunning&&(
+                    <span style={{color:G.gold,fontWeight:600,animation:"pulse 1.4s infinite"}}>✨ Generating name…</span>
+                  )}
+                  {!aiRunning&&aiDone&&!nameUserEdited&&(
+                    <span style={{color:G.green,fontWeight:600}}>✓ Auto-generated</span>
+                  )}
+                  {!aiRunning&&nameUserEdited&&aiData&&(
+                    <button className="btn" onClick={regenerateName} style={{background:"rgba(255,255,255,.7)",color:G.terracotta,border:`1px solid ${G.terracotta}44`,padding:"3px 10px",fontSize:10,fontWeight:600}}>
+                      ↩ Restore AI name
+                    </button>
+                  )}
+                  <span style={{color:G.dim}}>{editItem.favorite?"⭐ Favorite":"☆ Tap star to favorite"}</span>
+                </div>
               </div>
 
-              {/* Color, Size, Material */}
+              {/* COLOR, SIZE, MATERIAL */}
               <div className="g3" style={{marginBottom:14}}>
                 <div><div className="lbl">Color</div><input className="inp" placeholder="Navy Blue" value={editItem.color} onChange={e=>setEditItem(p=>({...p,color:e.target.value}))}/></div>
                 <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42, 10L" value={editItem.size} onChange={e=>setEditItem(p=>({...p,size:e.target.value}))}/></div>
                 <div><div className="lbl">Material</div><input className="inp" placeholder="Cotton, Silk" value={editItem.material} onChange={e=>setEditItem(p=>({...p,material:e.target.value}))}/></div>
               </div>
 
-              {/* Condition + Location */}
+              {/* CONDITION + LOCATION */}
               <div className="g2" style={{marginBottom:14}}>
                 <div><div className="lbl">Condition</div><select className="inp" value={editItem.condition} onChange={e=>setEditItem(p=>({...p,condition:e.target.value}))}><option value="">Select...</option>{CONDITIONS.map(c=><option key={c}>{c}</option>)}</select></div>
                 <div><div className="lbl">Location in House</div><select className="inp" value={editItem.location} onChange={e=>setEditItem(p=>({...p,location:e.target.value}))}><option value="">Select...</option>{LOCATIONS.map(l=><option key={l}>{l}</option>)}</select></div>
               </div>
 
-              {/* Status */}
+              {/* STATUS */}
               <div style={{marginBottom:14}}>
                 <div className="lbl">Status</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -649,7 +742,7 @@ export default function App(){
                 </div>
               </div>
 
-              {/* Action Needed */}
+              {/* ACTION NEEDED */}
               <div>
                 <div className="lbl">Action Needed</div>
                 <select className="inp" value={editItem.actionNeeded} onChange={e=>setEditItem(p=>({...p,actionNeeded:e.target.value}))}>
@@ -702,16 +795,16 @@ export default function App(){
               )}
             </div>
 
-            {/* Save / Cancel / Delete */}
+            {/* SAVE — never disabled due to AI */}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:4}}>
               {editItem.id&&<button className="btn" onClick={()=>handleDeleteItem(editItem.id)} style={{background:"#fdecea",color:G.red,padding:"10px 18px",fontSize:12,border:`1px solid ${G.red}44`,fontWeight:600}}>🗑 Delete</button>}
               <button className="btn" onClick={()=>setView("grid")} style={{background:"rgba(255,255,255,.8)",color:G.muted,padding:"10px 22px",fontSize:12,border:`1px solid ${G.border}`}}>Cancel</button>
               <button className="btn" onClick={handleSaveItem}
-                disabled={!editItem.name.trim()||editItem.name==="Generating name…"}
-                style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 28px",fontSize:13,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)",opacity:(!editItem.name.trim()||editItem.name==="Generating name…")?.5:1}}>
-                {saved?"✓ Saved!":aiRunning?"⏳ Save (AI still working…)":editItem.id?"Save Changes":"Save Item ✨"}
+                style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 28px",fontSize:13,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>
+                {saved?"✓ Saved!":aiRunning?"Save Item ⏳":editItem.id?"Save Changes":"Save Item ✨"}
               </button>
             </div>
+
           </div>
         </div>
       )}
@@ -779,9 +872,7 @@ export default function App(){
         <div style={{padding:"24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>My Outfits 👗</div>
           <div style={{color:G.muted,fontSize:13,marginBottom:22}}>Combine your inventory items into complete looks</div>
-          {outfits.length===0?(
-            <div style={{textAlign:"center",padding:"70px 20px",color:G.dim}}><div style={{fontSize:48,marginBottom:14}}>👗</div><div className="serif" style={{fontSize:24,color:G.muted,marginBottom:6}}>No outfits yet</div><div style={{fontSize:13}}>Create your first outfit from your inventory</div></div>
-          ):(
+          {outfits.length===0?<div style={{textAlign:"center",padding:"70px 20px",color:G.dim}}><div style={{fontSize:48,marginBottom:14}}>👗</div><div className="serif" style={{fontSize:24,color:G.muted,marginBottom:6}}>No outfits yet</div><div style={{fontSize:13}}>Create your first outfit from your inventory</div></div>:(
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:14}}>
               {outfits.map(outfit=>{
                 const oItems=outfit.itemIds.map(id=>items.find(i=>i.id===id)).filter(Boolean);
@@ -790,15 +881,9 @@ export default function App(){
                   <div key={outfit.id} className="card hover-card" onClick={()=>openDetailOutfit(outfit)}>
                     {photoItems.length>0&&<div style={{display:"flex",height:90,overflow:"hidden",background:G.surface}}>{photoItems.slice(0,3).map(it=><div key={it.id} style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={it.photo} alt={it.name} style={{width:"100%",height:"100%",objectFit:"contain"}}/></div>)}</div>}
                     <div style={{padding:"14px"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                        <span className="tag" style={{background:`${G.purple}18`,color:G.purple}}>{outfit.occasion||"Outfit"}</span>
-                        <span className="tag" style={{background:`${G.green}18`,color:G.green}}>{outfit.season}</span>
-                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span className="tag" style={{background:`${G.purple}18`,color:G.purple}}>{outfit.occasion||"Outfit"}</span><span className="tag" style={{background:`${G.green}18`,color:G.green}}>{outfit.season}</span></div>
                       <div className="serif" style={{fontSize:17,fontWeight:600,marginBottom:8,color:G.text}}>{outfit.name}</div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
-                        {oItems.slice(0,3).map(it=><span key={it.id} style={{background:`${G.terracotta}12`,border:`1px solid ${G.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:G.muted}}>{it.name}</span>)}
-                        {oItems.length>3&&<span style={{fontSize:11,color:G.dim}}>+{oItems.length-3} more</span>}
-                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>{oItems.slice(0,3).map(it=><span key={it.id} style={{background:`${G.terracotta}12`,border:`1px solid ${G.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:G.muted}}>{it.name}</span>)}{oItems.length>3&&<span style={{fontSize:11,color:G.dim}}>+{oItems.length-3} more</span>}</div>
                       {outfit.rating>0&&<div style={{fontSize:13}}>{[1,2,3,4,5].map(s=><span key={s}>{s<=outfit.rating?"⭐":"☆"}</span>)}</div>}
                     </div>
                     <div style={{height:3,background:`linear-gradient(90deg,${G.terracotta}66,${G.gold}44,transparent)`}}/>
@@ -861,10 +946,7 @@ export default function App(){
           <div style={{maxWidth:660,margin:"0 auto",padding:"28px 24px"}} className="slide">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
               <div>
-                <div style={{display:"flex",gap:8,marginBottom:10}}>
-                  <span className="tag" style={{background:`${G.purple}18`,color:G.purple}}>{outfit.occasion||"Outfit"}</span>
-                  <span className="tag" style={{background:`${G.green}18`,color:G.green}}>{outfit.season}</span>
-                </div>
+                <div style={{display:"flex",gap:8,marginBottom:10}}><span className="tag" style={{background:`${G.purple}18`,color:G.purple}}>{outfit.occasion||"Outfit"}</span><span className="tag" style={{background:`${G.green}18`,color:G.green}}>{outfit.season}</span></div>
                 <div className="serif" style={{fontSize:28,fontWeight:700,color:G.text}}>{outfit.name}</div>
                 {outfit.rating>0&&<div style={{marginTop:8,fontSize:14}}>{[1,2,3,4,5].map(s=><span key={s}>{s<=outfit.rating?"⭐":"☆"}</span>)}</div>}
               </div>
@@ -926,17 +1008,10 @@ export default function App(){
                       <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>{(r.tags||[]).map(t=><span key={t} className="tag" style={{background:`${G.terracotta}15`,color:G.terracotta,fontSize:9}}>{t}</span>)}</div>
                       <div className="serif" style={{fontSize:16,fontWeight:600,marginBottom:6,lineHeight:1.3,color:G.text}}>{r.title}</div>
                       <div style={{fontSize:12,color:G.muted,lineHeight:1.6,marginBottom:12}}>{r.description}</div>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                        <div className="serif" style={{fontSize:16,color:G.gold,fontWeight:700}}>{r.priceRange}</div>
-                        <div style={{fontSize:11,color:G.dim}}>{r.where}</div>
-                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div className="serif" style={{fontSize:16,color:G.gold,fontWeight:700}}>{r.priceRange}</div><div style={{fontSize:11,color:G.dim}}>{r.where}</div></div>
                       <div style={{display:"flex",gap:8}}>
-                        <a href={r.searchUrl||`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(r.title)}`} target="_blank" rel="noreferrer" style={{textDecoration:"none",flex:1}}>
-                          <button className="btn" style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"7px 14px",fontSize:11,fontWeight:700,width:"100%"}}>Shop Now →</button>
-                        </a>
-                        <button className="btn" onClick={()=>inWL?removeFromWishlist(wishlist.find(w=>w.title===r.title)?.id):addToWishlist(r)} style={{background:inWL?`${G.green}18`:"rgba(255,255,255,.7)",color:inWL?G.green:G.muted,border:`1px solid ${inWL?G.green:G.border}`,padding:"7px 12px",fontSize:13,fontWeight:600}}>
-                          {inWL?"✓":"♡"}
-                        </button>
+                        <a href={r.searchUrl||`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(r.title)}`} target="_blank" rel="noreferrer" style={{textDecoration:"none",flex:1}}><button className="btn" style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"7px 14px",fontSize:11,fontWeight:700,width:"100%"}}>Shop Now →</button></a>
+                        <button className="btn" onClick={()=>inWL?removeFromWishlist(wishlist.find(w=>w.title===r.title)?.id):addToWishlist(r)} style={{background:inWL?`${G.green}18`:"rgba(255,255,255,.7)",color:inWL?G.green:G.muted,border:`1px solid ${inWL?G.green:G.border}`,padding:"7px 12px",fontSize:13,fontWeight:600}}>{inWL?"✓":"♡"}</button>
                       </div>
                     </div>
                   );
