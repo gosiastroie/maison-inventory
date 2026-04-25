@@ -17,18 +17,18 @@ const SUBCATEGORIES = {
   Kitchenware: ["Cookware","Bakeware","Utensils","Appliances","Dinnerware","Glassware","Storage","Other"],
   Sports: ["Gym Equipment","Outdoor","Water Sports","Team Sports","Cycling","Yoga","Other"],
 };
-const CONDITIONS = ["Excellent","Good","Fair","Poor"];
+const CONDITIONS  = ["Excellent","Good","Fair","Poor"];
 const STATUS_OPTIONS = [
   { value:"keep",    label:"Keep",    color:"#6dab7a", icon:"♡" },
   { value:"sell",    label:"Sell",    color:"#d4845a", icon:"💰" },
   { value:"donate",  label:"Donate",  color:"#5a8fb5", icon:"🤝" },
   { value:"discard", label:"Discard", color:"#c46a5a", icon:"🗑" },
 ];
-const ACTION_NEEDED = ["None","Needs cleaning","Needs repair","Needs better photo","Needs measurements","Too small / too big","Maybe replace later","Return / exchange if new"];
-const STYLES    = ["Casual","Classic","Elegant","Minimalist","Sporty","Boho","Edgy"];
-const STYLE_SEASONS = ["Spring","Summer","Fall","Winter"];
-const OCCASIONS = ["Everyday","Work","Brunch","Evening","Travel","Formal"];
-const LOCATIONS = ["Bedroom","Wardrobe","Closet","Living Room","Kitchen","Bathroom","Garage","Basement","Attic","Storage Unit","Office","Other"];
+const ACTION_NEEDED  = ["None","Needs cleaning","Needs repair","Needs better photo","Needs measurements","Too small / too big","Maybe replace later","Return / exchange if new"];
+const STYLES         = ["Casual","Classic","Elegant","Minimalist","Sporty","Boho","Edgy"];
+const STYLE_SEASONS  = ["Spring","Summer","Fall","Winter"];
+const OCCASIONS      = ["Everyday","Work","Brunch","Evening","Travel","Formal"];
+const LOCATIONS      = ["Bedroom","Wardrobe","Closet","Living Room","Kitchen","Bathroom","Garage","Basement","Attic","Storage Unit","Office","Other"];
 const SELL_SITES = [
   { name:"eBay",                url:"https://www.ebay.com/sell" },
   { name:"Poshmark",            url:"https://poshmark.com/sell" },
@@ -77,38 +77,98 @@ function resizeImage(base64, maxSize=900) {
       canvas.getContext("2d").drawImage(img,0,0,w,h);
       resolve(canvas.toDataURL("image/jpeg",0.82));
     };
-    img.src = base64;
+    img.src=base64;
   });
 }
 
+// Build auto-name from AI data + category context
+function buildAutoName(aiData, category, subcategory) {
+  const cap = s => s ? s.split(" ").map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(" ") : "";
+
+  // Determine item type
+  let itemType = aiData.item_type || "";
+  if (!itemType) {
+    // fallback: infer from subcategory or category
+    if (subcategory) {
+      const sub = subcategory.toLowerCase();
+      // Map subcategory to a friendly type word
+      const typeMap = {
+        "dresses":"Dress","tops & blouses":"Top","sweaters":"Sweater",
+        "tees & tanks":"Top","pants":"Pants","jeans":"Jeans",
+        "jackets & coats":"Jacket","skirts":"Skirt","shorts":"Shorts",
+        "blazers":"Blazer","pajamas":"Pajamas","activewear":"Top",
+        "sweatshirts & sweatpants":"Sweatshirt","intimates":"Bra",
+        "swimwear":"Swimsuit","sneakers":"Sneakers","heels":"Heels",
+        "flats":"Flats","boots":"Boots","sandals":"Sandals",
+        "loafers":"Loafers","athletic":"Sneakers","slippers":"Slippers",
+        "mules":"Mules","wedges":"Wedges","handbags":"Bag",
+        "tote bags":"Tote","backpacks":"Backpack","clutches":"Clutch",
+        "crossbody":"Crossbody","shoulder bags":"Bag","wallets":"Wallet",
+        "travel bags":"Travel Bag",
+      };
+      itemType = typeMap[sub] || cap(subcategory.split(" &")[0]);
+    } else if (category) {
+      const catMap = {
+        "clothing":"Item","shoes":"Shoes","bags":"Bag",
+        "accessories":"Accessory","electronics":"Device",
+        "furniture":"Furniture","kitchenware":"Item",
+        "jewelry":"Jewelry","sports":"Equipment",
+      };
+      itemType = catMap[category.toLowerCase()] || cap(category);
+    } else {
+      itemType = "Item";
+    }
+  }
+
+  const color    = cap(aiData.color || "");
+  const material = cap(aiData.material || "");
+  const fit      = cap(aiData.fit || "");
+
+  // Build name: [Color] [Descriptor?] [ItemType]
+  const parts = [];
+  if (color) parts.push(color);
+  if (material && material.length < 12) parts.push(material);
+  else if (fit && fit.length < 12) parts.push(fit);
+  parts.push(cap(itemType));
+
+  return parts.filter(Boolean).join(" ");
+}
+
+// Fast AI photo analysis — returns item_type, color, material, fit + full details
 async function analyzePhotoWithAI(base64) {
   const base64Data = base64.split(",")[1];
   const response = await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({
-      model:"claude-sonnet-4-20250514", max_tokens:600,
+    body:JSON.stringify({
+      model:"claude-sonnet-4-20250514", max_tokens:500,
       messages:[{ role:"user", content:[
         { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:base64Data }},
-        { type:"text", text:`Analyze this item photo. Return ONLY valid JSON, no markdown:
+        { type:"text", text:`Analyze this item and return ONLY valid JSON, no markdown:
 {
+  "item_type": "",
+  "color": "",
+  "material": "",
+  "fit": "",
   "category": "",
   "subcategory": "",
-  "color": "",
   "size": "",
-  "material": "",
   "condition": "",
   "notes": ""
 }
-- category: Clothing, Shoes, Bags, Accessories, Electronics, Furniture, Books, Kitchenware, Toys, Sports, Jewelry, Other
+Rules:
+- item_type: specific short name e.g. "jacket", "dress", "sneakers", "tote bag", "blazer". REQUIRED.
+- color: primary color 1-2 words e.g. "Black", "Navy Blue", "Cream". REQUIRED.
+- material: only if confident e.g. "Leather", "Cotton", "Denim", "Silk", "Wool". Empty if unsure.
+- fit: only if visible e.g. "Oversized", "Cropped", "Slim". Empty if unsure.
+- category: one of: Clothing, Shoes, Bags, Accessories, Electronics, Furniture, Books, Kitchenware, Toys, Sports, Jewelry, Other
 - subcategory for Clothing: Dresses, Tops & Blouses, Sweaters, Tees & Tanks, Pants, Jeans, Jackets & Coats, Skirts, Shorts, Blazers, Pajamas, Activewear, Sweatshirts & Sweatpants, Intimates, Swimwear
 - subcategory for Shoes: Sneakers, Heels, Flats, Boots, Sandals, Loafers, Athletic, Slippers, Mules, Wedges
 - subcategory for Bags: Handbags, Tote Bags, Backpacks, Clutches, Crossbody, Shoulder Bags, Wallets, Travel Bags
-- color: primary color 1-3 words e.g. "Navy Blue"
-- size: visible label or estimate e.g. "M". Empty if unknown.
-- material: e.g. "Cotton", "Leather", "Denim"
+- size: visible label or estimate. Empty if unknown.
 - condition: Excellent, Good, Fair, or Poor
-- notes: 1-3 sentences with brand if visible, style details, key features`
-      }]}]
+- notes: 1-2 sentences with brand if visible and key details`
+        }
+      ]}]
     })
   });
   const data = await response.json();
@@ -119,7 +179,7 @@ async function analyzePhotoWithAI(base64) {
 
 async function callClaude(messages, system="") {
   const body = { model:"claude-sonnet-4-20250514", max_tokens:1000, messages };
-  if(system) body.system = system;
+  if(system) body.system=system;
   const res = await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
   });
@@ -156,9 +216,15 @@ export default function App() {
   const [saved,          setSaved]          = useState(false);
   const [lightbox,       setLightbox]       = useState(null);
   const [dbLoading,      setDbLoading]      = useState(false);
-  const [photoAnalyzing, setPhotoAnalyzing] = useState(false);
-  const [aiError,        setAiError]        = useState("");
   const [advancedOpen,   setAdvancedOpen]   = useState(false);
+
+  // AI fast-capture state
+  const [aiRunning,      setAiRunning]      = useState(false);   // AI in progress
+  const [aiDone,         setAiDone]         = useState(false);   // AI finished
+  const [aiError,        setAiError]        = useState("");
+  const [aiData,         setAiData]         = useState(null);    // raw AI result
+  const [nameUserEdited, setNameUserEdited] = useState(false);   // user manually changed name
+
   const cameraRef  = useRef();
   const galleryRef = useRef();
 
@@ -182,7 +248,7 @@ export default function App() {
       setItems((i.data||[]).map(dbToItem));
       setOutfits((o.data||[]).map(dbToOutfit));
       setWishlist(w.data||[]);
-    } catch(e){ console.error(e); }
+    } catch(e){console.error(e);}
     setDbLoading(false);
   }
 
@@ -213,39 +279,89 @@ export default function App() {
 
   const flash = ()=>{ setSaved(true); setTimeout(()=>setSaved(false),1500); };
   const stInfo = v => STATUS_OPTIONS.find(s=>s.value===v)||STATUS_OPTIONS[0];
-  const handleCategoryChange = cat => setEditItem(p=>({...p,category:cat,subcategory:""}));
-
-  // Toggle array field (multi-select)
-  const toggleArr = (field, val) => setEditItem(p=>({
-    ...p, [field]: p[field].includes(val) ? p[field].filter(x=>x!==val) : [...p[field],val]
+  const handleCategoryChange = cat => {
+    setEditItem(p=>({...p,category:cat,subcategory:""}));
+    // Re-generate name when category changes (if not user-edited)
+    if(!nameUserEdited && aiData) {
+      const newName = buildAutoName(aiData, cat, "");
+      setEditItem(p=>({...p,category:cat,subcategory:"",name:newName}));
+    }
+  };
+  const handleSubcategoryChange = sub => {
+    setEditItem(p=>({...p,subcategory:sub}));
+    // Re-generate name when subcategory changes (if not user-edited)
+    if(!nameUserEdited && aiData) {
+      const newName = buildAutoName(aiData, editItem.category, sub);
+      setEditItem(p=>({...p,subcategory:sub,name:newName}));
+    }
+  };
+  const toggleArr = (field,val) => setEditItem(p=>({
+    ...p,[field]:p[field].includes(val)?p[field].filter(x=>x!==val):[...p[field],val]
   }));
 
-  // Photo handler
+  // ── FAST CAPTURE PHOTO HANDLER ──
   const handlePhotoFile = async (file) => {
     if(!file) return;
-    setAiError("");
+    setAiError(""); setAiDone(false); setAiData(null); setNameUserEdited(false);
+
+    // 1. Show photo immediately
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const resized = await resizeImage(ev.target.result, 900);
-      setEditItem(p=>({...p, photo:resized}));
-      setPhotoAnalyzing(true);
+      setEditItem(p=>({...p, photo:resized, name: p.name||"Generating name…"}));
+
+      // 2. Start AI in background — do NOT block the UI
+      setAiRunning(true);
       try {
-        const small = await resizeImage(ev.target.result, 800);
-        const detected = await analyzePhotoWithAI(small);
+        const small  = await resizeImage(ev.target.result, 800);
+        const result = await analyzePhotoWithAI(small);
+        setAiData(result);
+
+        // 3. Auto-fill fields (don't overwrite user edits)
+        setEditItem(p => {
+          const cat = result.category || p.category;
+          const sub = result.subcategory || p.subcategory;
+          const autoName = buildAutoName(result, cat, sub);
+          return {
+            ...p,
+            category:    cat,
+            subcategory: sub,
+            color:       result.color    || p.color,
+            material:    result.material || p.material,
+            size:        result.size     || p.size,
+            condition:   result.condition|| p.condition,
+            notes:       result.notes    || p.notes,
+            // Only overwrite name if user hasn't edited it yet
+            name: p.name === "Generating name…" || !p.name || !nameUserEdited ? autoName : p.name,
+          };
+        });
+        setAiDone(true);
+      } catch(err) {
+        console.error(err);
+        setAiError("AI couldn't analyse this photo — fill in details manually.");
+        // Set a fallback name
         setEditItem(p=>({
           ...p,
-          category:    detected.category    || p.category,
-          subcategory: detected.subcategory || p.subcategory,
-          color:       detected.color       || p.color,
-          size:        detected.size        || p.size,
-          material:    detected.material    || p.material,
-          condition:   detected.condition   || p.condition,
-          notes:       detected.notes       || p.notes,
+          name: p.name === "Generating name…" ? "" : p.name,
         }));
-      } catch(err){ console.error(err); setAiError("AI couldn't analyse this photo. Fill in details manually."); }
-      setPhotoAnalyzing(false);
+      }
+      setAiRunning(false);
     };
     reader.readAsDataURL(file);
+  };
+
+  // When user edits name manually, stop auto-overwriting
+  const handleNameChange = (val) => {
+    setNameUserEdited(true);
+    setEditItem(p=>({...p,name:val}));
+  };
+
+  // Regenerate name button
+  const regenerateName = () => {
+    if(!aiData) return;
+    const newName = buildAutoName(aiData, editItem.category, editItem.subcategory);
+    setEditItem(p=>({...p,name:newName}));
+    setNameUserEdited(false);
   };
 
   async function handleLogin() {
@@ -266,13 +382,27 @@ export default function App() {
     setItems([]); setOutfits([]); setWishlist([]);
   }
 
-  const openNewItem    = ()=>{ setEditItem({...emptyItem}); setAdvancedOpen(false); setPage("inventory"); setView("form"); };
-  const openEditItem   = it=>{ setEditItem({...it}); setAdvancedOpen(false); setView("form"); };
+  const openNewItem = ()=>{
+    setEditItem({...emptyItem}); setAdvancedOpen(false);
+    setAiRunning(false); setAiDone(false); setAiData(null);
+    setAiError(""); setNameUserEdited(false);
+    setPage("inventory"); setView("form");
+  };
+  const openEditItem   = it=>{ setEditItem({...it}); setAdvancedOpen(false); setAiRunning(false); setAiDone(false); setAiData(null); setAiError(""); setNameUserEdited(true); setView("form"); };
   const openDetailItem = it=>{ setSelItem(it); setView("detail"); };
+
+  // Validate: need photo + category + subcategory + name at minimum
+  const canSave = () => {
+    if(!editItem.name || editItem.name==="Generating name…") return false;
+    return editItem.photo || editItem.name.trim().length>0;
+  };
+
   const handleSaveItem = async ()=>{
-    if(!editItem.name.trim()) return;
+    if(!canSave()) return;
     const isNew=!editItem.id;
     const item=isNew?{...editItem,id:uid()}:{...editItem};
+    // If name is still placeholder, replace with fallback
+    if(item.name==="Generating name…") item.name = `${item.category||"Item"} ${item.subcategory||""}`.trim();
     setItems(isNew?[item,...items]:items.map(i=>i.id===item.id?item:i));
     await supabase.from("items").upsert(itemToDb(item));
     flash(); setView("grid");
@@ -284,8 +414,8 @@ export default function App() {
     await supabase.from("items").update({status}).eq("id",id);
   };
   const toggleFavorite = async (id)=>{
-    const item = items.find(i=>i.id===id); if(!item) return;
-    const favorite = !item.favorite;
+    const item=items.find(i=>i.id===id); if(!item) return;
+    const favorite=!item.favorite;
     setItems(items.map(i=>i.id===id?{...i,favorite}:i));
     if(selItem?.id===id) setSelItem(p=>({...p,favorite}));
     await supabase.from("items").update({favorite}).eq("id",id);
@@ -334,8 +464,7 @@ export default function App() {
   const backView   = page==="outfits"?"outfitGrid":"grid";
   const activeSubs = filterCat!=="All"&&SUBCATEGORIES[filterCat]?SUBCATEGORIES[filterCat]:[];
 
-  // ── Shared CSS ──
-  const globalCss = `
+  const css = `
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
     ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:${G.surface}}::-webkit-scrollbar-thumb{background:${G.border};border-radius:3px}
@@ -365,18 +494,24 @@ export default function App() {
     .serif{font-family:'Cormorant Garamond',serif}
     .star{cursor:pointer;font-size:20px;transition:transform .15s}.star:hover{transform:scale(1.3)}
     .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;z-index:300;cursor:zoom-out;padding:16px}
-    .lightbox img{max-width:96vw;max-height:96vh;border-radius:12px;object-fit:contain;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+    .lightbox img{max-width:96vw;max-height:96vh;border-radius:12px;object-fit:contain}
     .subcat-bar{display:flex;gap:6px;flex-wrap:wrap;padding:10px 24px;background:${G.surface};border-bottom:1px solid ${G.border}}
     .stat-box{background:${G.card};border:1px solid ${G.border};border-radius:12px;padding:12px 18px;text-align:center;min-width:90px;flex:0 0 auto;box-shadow:0 2px 8px rgba(139,90,43,.08)}
     .photo-btn{cursor:pointer;border:none;border-radius:10px;font-family:'Jost',sans-serif;font-weight:600;transition:all .18s;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 14px;flex:1}
     .photo-btn:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(193,96,58,.2)}
-    .section-header{display:flex;align-items:center;gap:10px;padding:12px 16px;background:linear-gradient(135deg,${G.surface},${G.border}22);border-radius:10px;margin-bottom:14px;border:1px solid ${G.border}}
+    .section-box{background:rgba(255,255,255,.5);border:1px solid ${G.border};border-radius:14px;padding:20px;margin-bottom:4px}
+    .section-title{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:700;color:${G.text};margin-bottom:16px;display:flex;align-items:center;gap:8px}
     .toggle-chip{cursor:pointer;padding:6px 14px;border-radius:20px;font-family:'Jost',sans-serif;font-size:12px;font-weight:500;transition:all .18s;border:1.5px solid ${G.border};background:rgba(255,255,255,.7);color:${G.muted}}
     .toggle-chip.active{border-color:${G.terracotta};background:${G.terracotta}18;color:${G.terracotta};font-weight:700}
     .fav-btn{cursor:pointer;background:none;border:none;font-size:22px;transition:transform .2s;line-height:1}
     .fav-btn:hover{transform:scale(1.2)}
     .advanced-toggle{cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(255,255,255,.5);border:1.5px dashed ${G.border};border-radius:10px;font-family:'Jost',sans-serif;font-size:13px;color:${G.muted};font-weight:600;transition:all .18s;width:100%}
-    .advanced-toggle:hover{border-color:${G.gold};color:${G.gold};background:rgba(255,255,255,.8)}
+    .advanced-toggle:hover{border-color:${G.gold};color:${G.gold}}
+    .name-generating{color:${G.dim};font-style:italic;animation:pulse 1.4s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .ai-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:${G.terracotta}15;border:1px solid ${G.terracotta}33;border-radius:20px;font-size:10px;color:${G.terracotta};font-weight:700}
+    .save-btn-main{background:linear-gradient(135deg,${G.terracotta},${G.gold});color:#fff;padding:13px 32px;font-size:14px;font-weight:700;border-radius:10px;box-shadow:0 4px 16px rgba(193,96,58,.4);width:100%;letter-spacing:.3px}
+    .save-btn-main:disabled{opacity:.45;cursor:not-allowed;transform:none}
   `;
 
   // ── LOADING ──
@@ -402,8 +537,7 @@ export default function App() {
         .inp{background:rgba(255,255,255,.7);border:1.5px solid ${G.border};color:${G.text};border-radius:8px;padding:12px 16px;font-family:'Jost',sans-serif;font-size:14px;width:100%;transition:border .18s;outline:none}
         .inp:focus{border-color:${G.terracotta};background:rgba(255,255,255,.95)}
         .inp::placeholder{color:${G.dim}}
-        @keyframes sp{to{transform:rotate(360deg)}}
-        @keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes sp{to{transform:rotate(360deg)}}@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
       `}</style>
       <div style={{width:"100%",maxWidth:420,animation:"fadeIn .5s ease"}}>
         <div style={{position:"fixed",top:-60,right:-60,width:220,height:220,borderRadius:"50%",background:"rgba(193,96,58,.12)",pointerEvents:"none"}}/>
@@ -416,12 +550,8 @@ export default function App() {
           <div style={{fontSize:11,color:G.muted,letterSpacing:"3px",marginTop:4}}>PERSONAL INVENTORY</div>
         </div>
         <div style={{background:"rgba(255,255,255,.75)",backdropFilter:"blur(12px)",border:`1px solid rgba(255,255,255,.9)`,borderRadius:20,padding:32,boxShadow:"0 20px 60px rgba(139,90,43,.15)"}}>
-          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,marginBottom:4,textAlign:"center",color:G.text}}>
-            {authView==="login"?"Welcome Back 👋":"Create Your Account"}
-          </div>
-          <div style={{fontSize:12,color:G.muted,textAlign:"center",marginBottom:24}}>
-            {authView==="login"?"Sign in to your personal catalog":"Free forever · Private & secure"}
-          </div>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,marginBottom:4,textAlign:"center",color:G.text}}>{authView==="login"?"Welcome Back 👋":"Create Your Account"}</div>
+          <div style={{fontSize:12,color:G.muted,textAlign:"center",marginBottom:24}}>{authView==="login"?"Sign in to your personal catalog":"Free forever · Private & secure"}</div>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <div>
               <div style={{fontSize:10,color:G.muted,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6}}>Email</div>
@@ -431,27 +561,14 @@ export default function App() {
               <div style={{fontSize:10,color:G.muted,letterSpacing:"1.2px",textTransform:"uppercase",marginBottom:6}}>Password</div>
               <input className="inp" type="password" placeholder="••••••••" value={authPass} onChange={e=>setAuthPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(authView==="login"?handleLogin():handleSignup())}/>
             </div>
-            {authError&&(
-              <div style={{fontSize:12,color:authError.startsWith("✅")?"#4a7a52":"#a63a2a",background:authError.startsWith("✅")?"#e8f5eb":"#fdecea",border:`1px solid ${authError.startsWith("✅")?"#9ecba6":"#f0b8b0"}`,borderRadius:8,padding:"10px 14px",lineHeight:1.5}}>
-                {authError}
-              </div>
-            )}
+            {authError&&<div style={{fontSize:12,color:authError.startsWith("✅")?"#4a7a52":"#a63a2a",background:authError.startsWith("✅")?"#e8f5eb":"#fdecea",border:`1px solid ${authError.startsWith("✅")?"#9ecba6":"#f0b8b0"}`,borderRadius:8,padding:"10px 14px",lineHeight:1.5}}>{authError}</div>}
             <button className="btn" onClick={authView==="login"?handleLogin:handleSignup} disabled={authLoading}
               style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"13px",fontSize:14,fontWeight:700,marginTop:4,boxShadow:"0 4px 16px rgba(193,96,58,.4)",opacity:authLoading?.7:1}}>
-              {authLoading?(
-                <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-                  <span style={{width:16,height:16,border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"sp 1s linear infinite"}}/>
-                  {authView==="login"?"Signing in…":"Creating account…"}
-                </span>
-              ):authView==="login"?"Sign In →":"Create Account →"}
+              {authLoading?<span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10}}><span style={{width:16,height:16,border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"sp 1s linear infinite"}}/>{authView==="login"?"Signing in…":"Creating account…"}</span>:authView==="login"?"Sign In →":"Create Account →"}
             </button>
           </div>
           <div style={{textAlign:"center",marginTop:20,fontSize:13,color:G.muted}}>
-            {authView==="login"?(
-              <>Don't have an account?{" "}<span onClick={()=>{setAuthView("signup");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign up free</span></>
-            ):(
-              <>Already have an account?{" "}<span onClick={()=>{setAuthView("login");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign in</span></>
-            )}
+            {authView==="login"?<>Don't have an account?{" "}<span onClick={()=>{setAuthView("signup");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign up free</span></>:<>Already have an account?{" "}<span onClick={()=>{setAuthView("login");setAuthError("");}} style={{color:G.terracotta,cursor:"pointer",fontWeight:700}}>Sign in</span></>}
           </div>
         </div>
         <div style={{textAlign:"center",marginTop:16,fontSize:11,color:G.muted}}>🔒 Your data is private and secure</div>
@@ -462,7 +579,7 @@ export default function App() {
   // ── MAIN APP ──
   return (
     <div style={{minHeight:"100vh",background:G.bg,color:G.text,fontFamily:"'Jost',sans-serif"}}>
-      <style>{globalCss}</style>
+      <style>{css}</style>
 
       {/* NAV */}
       <nav style={{background:`linear-gradient(135deg,#e8d5bc,#f0e4d0)`,borderBottom:`1px solid ${G.border}`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,flexWrap:"wrap",gap:10,boxShadow:"0 2px 12px rgba(139,90,43,.12)"}}>
@@ -486,25 +603,12 @@ export default function App() {
         </div>
       </nav>
 
-      {dbLoading&&(
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"12px",background:`linear-gradient(135deg,#f5ede0,#ead5bc)`,borderBottom:`1px solid ${G.border}`,fontSize:13,color:G.muted}}>
-          <div className="spin" style={{width:16,height:16,border:`2px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
-          Loading your inventory…
-        </div>
-      )}
+      {dbLoading&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"12px",background:`linear-gradient(135deg,#f5ede0,#ead5bc)`,borderBottom:`1px solid ${G.border}`,fontSize:13,color:G.muted}}><div className="spin" style={{width:16,height:16,border:`2px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>Loading your inventory…</div>}
 
       {/* STATS */}
       {page==="inventory"&&view==="grid"&&!dbLoading&&(
         <div style={{display:"flex",gap:10,padding:"14px 24px",overflowX:"auto",borderBottom:`1px solid ${G.border}`,background:`linear-gradient(135deg,#f5ede0,#ead5bc)`}}>
-          {[
-            {l:"Total",v:items.length,icon:"📦"},
-            {l:"Favorites",v:items.filter(i=>i.favorite).length,icon:"⭐",c:G.gold},
-            {l:"To Sell",v:items.filter(i=>i.status==="sell").length,icon:"💰",c:G.orange},
-            {l:"To Donate",v:items.filter(i=>i.status==="donate").length,icon:"🤝",c:G.blue},
-            {l:"To Keep",v:items.filter(i=>i.status==="keep").length,icon:"♡",c:G.green},
-            {l:"Est. Value",v:"$"+items.filter(i=>i.price).reduce((a,i)=>a+(parseFloat(i.price)||0),0).toLocaleString(),icon:"✨"},
-            {l:"Outfits",v:outfits.length,icon:"👗",c:G.purple},
-          ].map(s=>(
+          {[{l:"Total",v:items.length,icon:"📦"},{l:"Favorites",v:items.filter(i=>i.favorite).length,icon:"⭐",c:G.gold},{l:"To Sell",v:items.filter(i=>i.status==="sell").length,icon:"💰",c:G.orange},{l:"To Donate",v:items.filter(i=>i.status==="donate").length,icon:"🤝",c:G.blue},{l:"To Keep",v:items.filter(i=>i.status==="keep").length,icon:"♡",c:G.green},{l:"Est. Value",v:"$"+items.filter(i=>i.price).reduce((a,i)=>a+(parseFloat(i.price)||0),0).toLocaleString(),icon:"✨"},{l:"Outfits",v:outfits.length,icon:"👗",c:G.purple}].map(s=>(
             <div key={s.l} className="stat-box">
               <div style={{fontSize:14,marginBottom:2}}>{s.icon}</div>
               <div className="serif" style={{fontSize:19,fontWeight:700,color:s.c||G.terracotta}}>{s.v}</div>
@@ -521,28 +625,18 @@ export default function App() {
             <input className="inp" placeholder="🔍 Search items..." value={searchQ} onChange={e=>setSearchQ(e.target.value)} style={{width:180}}/>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {["All",...CATEGORIES].map(c=>(
-                <button key={c} className="tab" onClick={()=>handleFilterCat(c)}
-                  style={{background:filterCat===c?`linear-gradient(135deg,${G.terracotta},${G.gold})`:"rgba(255,255,255,.7)",color:filterCat===c?"#fff":G.muted,border:`1.5px solid ${filterCat===c?G.terracotta:G.border}`,padding:"5px 11px",fontSize:11}}>{c}</button>
+                <button key={c} className="tab" onClick={()=>handleFilterCat(c)} style={{background:filterCat===c?`linear-gradient(135deg,${G.terracotta},${G.gold})`:"rgba(255,255,255,.7)",color:filterCat===c?"#fff":G.muted,border:`1.5px solid ${filterCat===c?G.terracotta:G.border}`,padding:"5px 11px",fontSize:11}}>{c}</button>
               ))}
             </div>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {["All",...STATUS_OPTIONS.map(s=>s.value)].map(s=>(
-                <button key={s} className="tab" onClick={()=>setFilterStatus(s)}
-                  style={{background:filterStatus===s?`linear-gradient(135deg,${G.terracotta},${G.gold})`:"rgba(255,255,255,.7)",color:filterStatus===s?"#fff":G.muted,border:`1.5px solid ${filterStatus===s?G.terracotta:G.border}`,padding:"5px 11px",fontSize:11}}>
+                <button key={s} className="tab" onClick={()=>setFilterStatus(s)} style={{background:filterStatus===s?`linear-gradient(135deg,${G.terracotta},${G.gold})`:"rgba(255,255,255,.7)",color:filterStatus===s?"#fff":G.muted,border:`1.5px solid ${filterStatus===s?G.terracotta:G.border}`,padding:"5px 11px",fontSize:11}}>
                   {s==="All"?"All":STATUS_OPTIONS.find(o=>o.value===s)?.label}
                 </button>
               ))}
             </div>
           </div>
-          {activeSubs.length>0&&(
-            <div className="subcat-bar">
-              <span style={{fontSize:10,color:G.muted,letterSpacing:"1px",textTransform:"uppercase",alignSelf:"center",marginRight:4}}>Filter:</span>
-              {["All",...activeSubs].map(s=>(
-                <button key={s} className="subtab" onClick={()=>setFilterSub(s)}
-                  style={{background:filterSub===s?"rgba(193,96,58,.15)":"rgba(255,255,255,.6)",color:filterSub===s?G.terracotta:G.muted,border:`1px solid ${filterSub===s?G.terracotta:G.border}`}}>{s}</button>
-              ))}
-            </div>
-          )}
+          {activeSubs.length>0&&<div className="subcat-bar"><span style={{fontSize:10,color:G.muted,letterSpacing:"1px",textTransform:"uppercase",alignSelf:"center",marginRight:4}}>Filter:</span>{["All",...activeSubs].map(s=><button key={s} className="subtab" onClick={()=>setFilterSub(s)} style={{background:filterSub===s?"rgba(193,96,58,.15)":"rgba(255,255,255,.6)",color:filterSub===s?G.terracotta:G.muted,border:`1px solid ${filterSub===s?G.terracotta:G.border}`}}>{s}</button>)}</div>}
           <div style={{padding:"16px 24px"}}>
             {filteredItems.length===0?(
               <div style={{textAlign:"center",padding:"70px 20px",color:G.dim}}>
@@ -554,7 +648,6 @@ export default function App() {
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:14}}>
                 {filteredItems.map(item=>{const st=stInfo(item.status);return(
                   <div key={item.id} className="card hover-card" onClick={()=>openDetailItem(item)} style={{position:"relative"}}>
-                    {/* Favorite star */}
                     {item.favorite&&<div style={{position:"absolute",top:8,right:8,zIndex:2,fontSize:16,filter:"drop-shadow(0 1px 2px rgba(0,0,0,.3))"}}>⭐</div>}
                     {item.photo?(
                       <div style={{height:200,overflow:"hidden",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -591,230 +684,239 @@ export default function App() {
       )}
 
       {/* ══════════════════════════════════════════════════
-          ITEM FORM — redesigned with sections
+          ITEM FORM — FAST CAPTURE
       ══════════════════════════════════════════════════ */}
       {page==="inventory"&&view==="form"&&(
-        <div style={{maxWidth:700,margin:"0 auto",padding:"28px 24px"}} className="slide">
-          <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>{editItem.id?"Edit Item ✏️":"Add New Item ✨"}</div>
-          <div style={{color:G.muted,fontSize:13,marginBottom:24}}>Take a photo — AI fills in the details automatically!</div>
+        <div style={{maxWidth:680,margin:"0 auto",padding:"24px 20px"}} className="slide">
 
-          <div style={{display:"flex",flexDirection:"column",gap:20}}>
+          {/* Header */}
+          <div style={{marginBottom:20}}>
+            <div className="serif" style={{fontSize:26,fontWeight:700,color:G.text}}>{editItem.id?"Edit Item ✏️":"Add New Item"}</div>
+            <div style={{fontSize:13,color:G.muted,marginTop:4}}>
+              {editItem.id?"Update details below":"📸 Photo → Category → Save — done in seconds!"}
+            </div>
+          </div>
 
-            {/* ── SECTION 1: QUICK ADD ── */}
-            <div style={{background:"rgba(255,255,255,.5)",border:`1px solid ${G.border}`,borderRadius:14,padding:"20px"}}>
-              <div className="section-header">
-                <span style={{fontSize:18}}>📸</span>
-                <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:700,color:G.text}}>Quick Add</span>
-                <span style={{fontSize:11,color:G.muted,marginLeft:"auto"}}>AI auto-fills from photo ✨</span>
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+            {/* ── STEP 1: PHOTO ── */}
+            <div className="section-box">
+              <div className="section-title">
+                <span>📸</span> Step 1 — Photo
+                {aiRunning&&<span className="ai-badge"><span className="spin" style={{width:10,height:10,border:"1.5px solid rgba(193,96,58,.3)",borderTopColor:G.terracotta,borderRadius:"50%",display:"inline-block"}}/>Analysing…</span>}
+                {aiDone&&!aiRunning&&<span className="ai-badge">✨ AI filled</span>}
               </div>
 
-              {/* PHOTO */}
-              <div style={{marginBottom:16}}>
-                <input ref={cameraRef}  type="file" accept="image/*" capture="environment" onChange={e=>handlePhotoFile(e.target.files[0])} style={{display:"none"}}/>
-                <input ref={galleryRef} type="file" accept="image/*" onChange={e=>handlePhotoFile(e.target.files[0])} style={{display:"none"}}/>
-                {editItem.photo?(
-                  <div style={{borderRadius:12,overflow:"hidden",border:`1px solid ${G.border}`,background:G.surface}}>
-                    <div style={{position:"relative",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",minHeight:240,maxHeight:360}}>
-                      <img src={editItem.photo} alt="item" style={{maxWidth:"100%",maxHeight:360,objectFit:"contain",display:"block",filter:photoAnalyzing?"blur(3px)":"none",transition:"filter .3s"}}/>
-                      {photoAnalyzing&&(
-                        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(242,235,224,.85)",gap:12}}>
-                          <div className="spin" style={{width:38,height:38,border:`3px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
-                          <div style={{fontSize:14,color:G.terracotta,fontWeight:700}}>✨ Analysing your photo…</div>
-                          <div style={{fontSize:12,color:G.muted}}>Detecting category, color, material & more</div>
-                        </div>
-                      )}
-                    </div>
-                    {!photoAnalyzing&&(editItem.category||editItem.color||editItem.material)&&(
-                      <div style={{padding:"8px 12px",background:`${G.terracotta}10`,borderTop:`1px solid ${G.border}`}}>
-                        <div style={{fontSize:11,color:G.terracotta,fontWeight:700,marginBottom:5}}>✨ AI detected:</div>
-                        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                          {editItem.category&&<span className="tag" style={{background:`${G.terracotta}18`,color:G.terracotta,fontSize:10}}>📁 {editItem.category}</span>}
-                          {editItem.subcategory&&<span className="tag" style={{background:`${G.gold}18`,color:G.gold,fontSize:10}}>🏷 {editItem.subcategory}</span>}
-                          {editItem.color&&<span className="tag" style={{background:`${G.green}18`,color:G.green,fontSize:10}}>🎨 {editItem.color}</span>}
-                          {editItem.material&&<span className="tag" style={{background:`${G.blue}18`,color:G.blue,fontSize:10}}>🧵 {editItem.material}</span>}
-                          {editItem.condition&&<span className="tag" style={{background:`${G.purple}18`,color:G.purple,fontSize:10}}>★ {editItem.condition}</span>}
-                          {editItem.size&&<span className="tag" style={{background:`${G.orange}18`,color:G.orange,fontSize:10}}>⌀ {editItem.size}</span>}
-                        </div>
+              <input ref={cameraRef}  type="file" accept="image/*" capture="environment" onChange={e=>handlePhotoFile(e.target.files[0])} style={{display:"none"}}/>
+              <input ref={galleryRef} type="file" accept="image/*" onChange={e=>handlePhotoFile(e.target.files[0])} style={{display:"none"}}/>
+
+              {editItem.photo?(
+                <div style={{borderRadius:12,overflow:"hidden",border:`1px solid ${G.border}`,background:G.surface}}>
+                  <div style={{position:"relative",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",minHeight:220,maxHeight:340}}>
+                    <img src={editItem.photo} alt="item" style={{maxWidth:"100%",maxHeight:340,objectFit:"contain",display:"block"}}/>
+                    {aiRunning&&(
+                      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(242,235,224,.7)",gap:10,pointerEvents:"none"}}>
+                        <div className="spin" style={{width:36,height:36,border:`3px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
+                        <div style={{fontSize:13,color:G.terracotta,fontWeight:700}}>✨ Analysing…</div>
                       </div>
                     )}
-                    {aiError&&<div style={{padding:"8px 12px",background:"#fdecea",fontSize:12,color:G.red}}>{aiError}</div>}
-                    <div style={{display:"flex",gap:8,padding:"10px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`}}>
-                      <button className="btn" onClick={()=>cameraRef.current.click()}  style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>📷 Camera</button>
-                      <button className="btn" onClick={()=>galleryRef.current.click()} style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>🖼 Gallery</button>
-                      <button className="btn" onClick={()=>{setEditItem(p=>({...p,photo:null}));setAiError("");}} style={{background:"#fdecea",color:G.red,padding:"8px 14px",fontSize:11,fontWeight:600,border:`1px solid ${G.red}33`}}>✕</button>
-                    </div>
                   </div>
-                ):(
-                  <div style={{border:`2px dashed ${G.border}`,borderRadius:12,padding:"20px",background:"rgba(255,255,255,.4)"}}>
-                    <div style={{textAlign:"center",marginBottom:14}}>
-                      <div style={{fontSize:38,marginBottom:6}}>📷</div>
-                      <div style={{fontSize:13,color:G.text,fontWeight:600,marginBottom:3}}>Add a photo</div>
-                      <div style={{fontSize:11,color:G.muted}}>✨ AI detects category, color, material, condition & more</div>
-                    </div>
-                    <div style={{display:"flex",gap:10}}>
-                      <button className="photo-btn" onClick={()=>cameraRef.current.click()} style={{background:`linear-gradient(135deg,${G.terracotta}18,${G.gold}18)`,border:`1.5px solid ${G.terracotta}44`,color:G.terracotta}}>
-                        <span style={{fontSize:24}}>📷</span>
-                        <span style={{fontSize:12,fontWeight:700}}>Camera</span>
-                      </button>
-                      <button className="photo-btn" onClick={()=>galleryRef.current.click()} style={{background:`linear-gradient(135deg,${G.blue}12,${G.purple}12)`,border:`1.5px solid ${G.blue}44`,color:G.blue}}>
-                        <span style={{fontSize:24}}>🖼</span>
-                        <span style={{fontSize:12,fontWeight:700}}>Gallery</span>
-                      </button>
-                    </div>
+                  {aiError&&<div style={{padding:"8px 12px",background:"#fdecea",fontSize:12,color:G.red}}>{aiError}</div>}
+                  <div style={{display:"flex",gap:8,padding:"10px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`}}>
+                    <button className="btn" onClick={()=>cameraRef.current.click()}  style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>📷 Camera</button>
+                    <button className="btn" onClick={()=>galleryRef.current.click()} style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>🖼 Gallery</button>
+                    <button className="btn" onClick={()=>{setEditItem(p=>({...p,photo:null}));setAiDone(false);setAiData(null);setAiError("");}} style={{background:"#fdecea",color:G.red,padding:"8px 14px",fontSize:11,fontWeight:600,border:`1px solid ${G.red}33`}}>✕</button>
                   </div>
-                )}
-              </div>
+                </div>
+              ):(
+                <div style={{border:`2px dashed ${G.border}`,borderRadius:12,padding:"20px",background:"rgba(255,255,255,.4)"}}>
+                  <div style={{textAlign:"center",marginBottom:14}}>
+                    <div style={{fontSize:38,marginBottom:6}}>📷</div>
+                    <div style={{fontSize:13,color:G.text,fontWeight:600,marginBottom:3}}>Add a photo to get started</div>
+                    <div style={{fontSize:11,color:G.muted}}>✨ AI auto-generates the item name from your photo</div>
+                  </div>
+                  <div style={{display:"flex",gap:10}}>
+                    <button className="photo-btn" onClick={()=>cameraRef.current.click()} style={{background:`linear-gradient(135deg,${G.terracotta}18,${G.gold}18)`,border:`1.5px solid ${G.terracotta}44`,color:G.terracotta}}>
+                      <span style={{fontSize:24}}>📷</span><span style={{fontSize:12,fontWeight:700}}>Camera</span>
+                    </button>
+                    <button className="photo-btn" onClick={()=>galleryRef.current.click()} style={{background:`linear-gradient(135deg,${G.blue}12,${G.purple}12)`,border:`1.5px solid ${G.blue}44`,color:G.blue}}>
+                      <span style={{fontSize:24}}>🖼</span><span style={{fontSize:12,fontWeight:700}}>Gallery</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
-              {/* Category + Subcategory */}
-              <div className="g2" style={{marginBottom:14}}>
+            {/* ── STEP 2: CATEGORY ── */}
+            <div className="section-box">
+              <div className="section-title"><span>🏷</span> Step 2 — Category</div>
+              <div className="g2">
                 <div>
-                  <div className="lbl">Category *</div>
+                  <div className="lbl">Category</div>
                   <select className="inp" value={editItem.category} onChange={e=>handleCategoryChange(e.target.value)}>
-                    <option value="">Select...</option>
+                    <option value="">Select…</option>
                     {CATEGORIES.map(c=><option key={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
                   <div className="lbl">Subcategory</div>
-                  <select className="inp" value={editItem.subcategory} onChange={e=>setEditItem(p=>({...p,subcategory:e.target.value}))} disabled={!SUBCATEGORIES[editItem.category]}>
-                    <option value="">Select...</option>
+                  <select className="inp" value={editItem.subcategory} onChange={e=>handleSubcategoryChange(e.target.value)} disabled={!SUBCATEGORIES[editItem.category]}>
+                    <option value="">Select…</option>
                     {(SUBCATEGORIES[editItem.category]||[]).map(s=><option key={s}>{s}</option>)}
                   </select>
                 </div>
               </div>
+            </div>
 
-              {/* Name + Favorite */}
-              <div style={{marginBottom:14}}>
-                <div className="lbl">Item Name *</div>
-                <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                  <input className="inp" placeholder="e.g. Floral Wrap Dress" value={editItem.name} onChange={e=>setEditItem(p=>({...p,name:e.target.value}))} style={{flex:1}}/>
-                  <button className="fav-btn" onClick={()=>setEditItem(p=>({...p,favorite:!p.favorite}))} title={editItem.favorite?"Remove from favorites":"Add to favorites"}>
-                    {editItem.favorite?"⭐":"☆"}
-                  </button>
+            {/* ── STEP 3: ITEM NAME ── */}
+            <div className="section-box">
+              <div className="section-title">
+                <span>✏️</span> Step 3 — Item Name
+                {aiRunning&&<span style={{fontSize:11,color:G.muted,fontStyle:"italic",fontFamily:"'Jost',sans-serif",fontWeight:400}}>generating…</span>}
+                {aiDone&&!nameUserEdited&&<span style={{fontSize:11,color:G.green,fontFamily:"'Jost',sans-serif",fontWeight:600}}>✓ Auto-generated</span>}
+                {nameUserEdited&&<span style={{fontSize:11,color:G.muted,fontFamily:"'Jost',sans-serif",fontWeight:400}}>edited by you</span>}
+              </div>
+
+              <div style={{position:"relative"}}>
+                <input
+                  className={`inp ${editItem.name==="Generating name…"?"name-generating":""}`}
+                  placeholder="e.g. Black Leather Jacket"
+                  value={editItem.name==="Generating name…"?"":editItem.name}
+                  onChange={e=>handleNameChange(e.target.value)}
+                  style={{fontSize:15,fontWeight:600,paddingRight:aiData&&!aiRunning?40:14}}
+                />
+                {editItem.name==="Generating name…"&&(
+                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",padding:"0 14px",pointerEvents:"none"}}>
+                    <span className="name-generating" style={{fontSize:13,color:G.dim}}>✨ Generating name…</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Regenerate button — show if AI ran and user hasn't edited */}
+              {aiData&&!aiRunning&&nameUserEdited&&(
+                <button className="btn" onClick={regenerateName}
+                  style={{marginTop:8,background:"rgba(255,255,255,.7)",color:G.terracotta,border:`1px solid ${G.terracotta}44`,padding:"5px 14px",fontSize:11,fontWeight:600}}>
+                  ↩ Restore AI name
+                </button>
+              )}
+
+              {/* Favorite toggle */}
+              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:12}}>
+                <button className="fav-btn" onClick={()=>setEditItem(p=>({...p,favorite:!p.favorite}))}>
+                  {editItem.favorite?"⭐":"☆"}
+                </button>
+                <span style={{fontSize:12,color:G.muted}}>{editItem.favorite?"Marked as favorite":"Mark as favorite"}</span>
+              </div>
+            </div>
+
+            {/* ── QUICK SAVE BUTTON ── */}
+            <button
+              className="btn save-btn-main"
+              onClick={handleSaveItem}
+              disabled={!canSave()||aiRunning}
+            >
+              {saved ? "✓ Saved!" : aiRunning ? "⏳ AI still working — you can save anyway…" : editItem.id ? "Save Changes" : "✨ Save Item"}
+            </button>
+
+            {!canSave()&&!aiRunning&&(
+              <div style={{textAlign:"center",fontSize:12,color:G.dim,marginTop:-8}}>
+                Add a name to save
+              </div>
+            )}
+
+            {/* ── EXTRA DETAILS (all optional, collapsed) ── */}
+            <button className="advanced-toggle" onClick={()=>setAdvancedOpen(p=>!p)}>
+              <span>📋 Add More Details <span style={{fontSize:11,fontWeight:400}}>(optional)</span></span>
+              <span style={{fontSize:16,transition:"transform .2s",transform:advancedOpen?"rotate(180deg)":"rotate(0deg)"}}>▾</span>
+            </button>
+
+            {advancedOpen&&(
+              <div style={{background:"rgba(255,255,255,.5)",border:`1px solid ${G.border}`,borderTop:"none",borderRadius:"0 0 14px 14px",padding:"20px",marginTop:-14}} className="slide">
+
+                {/* Status + Action */}
+                <div style={{marginBottom:16}}>
+                  <div className="lbl">Status</div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {STATUS_OPTIONS.map(s=>(
+                      <button key={s.value} className="btn" onClick={()=>setEditItem(p=>({...p,status:s.value}))}
+                        style={{padding:"7px 14px",fontSize:11,fontWeight:600,background:editItem.status===s.value?s.color:"rgba(255,255,255,.7)",color:editItem.status===s.value?"#fff":G.muted,border:`1.5px solid ${editItem.status===s.value?s.color:G.border}`}}>
+                        {s.icon} {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div style={{fontSize:11,color:G.muted,marginTop:4}}>{editItem.favorite?"★ Marked as favorite":"☆ Tap star to mark as favorite"}</div>
-              </div>
 
-              {/* Color, Size, Material */}
-              <div className="g3" style={{marginBottom:14}}>
-                <div><div className="lbl">Color</div><input className="inp" placeholder="Navy Blue" value={editItem.color} onChange={e=>setEditItem(p=>({...p,color:e.target.value}))}/></div>
-                <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42, 10L" value={editItem.size} onChange={e=>setEditItem(p=>({...p,size:e.target.value}))}/></div>
-                <div><div className="lbl">Material</div><input className="inp" placeholder="Cotton, Silk" value={editItem.material} onChange={e=>setEditItem(p=>({...p,material:e.target.value}))}/></div>
-              </div>
+                <div className="g2" style={{marginBottom:16}}>
+                  <div>
+                    <div className="lbl">Action Needed</div>
+                    <select className="inp" value={editItem.actionNeeded} onChange={e=>setEditItem(p=>({...p,actionNeeded:e.target.value}))}>
+                      {ACTION_NEEDED.map(a=><option key={a}>{a}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="lbl">Location in House</div>
+                    <select className="inp" value={editItem.location} onChange={e=>setEditItem(p=>({...p,location:e.target.value}))}>
+                      <option value="">Select…</option>
+                      {LOCATIONS.map(l=><option key={l}>{l}</option>)}
+                    </select>
+                  </div>
+                </div>
 
-              {/* Condition + Location */}
-              <div className="g2" style={{marginBottom:14}}>
-                <div>
+                {/* Item details */}
+                <div className="g3" style={{marginBottom:16}}>
+                  <div><div className="lbl">Color</div><input className="inp" placeholder="Navy Blue" value={editItem.color} onChange={e=>setEditItem(p=>({...p,color:e.target.value}))}/></div>
+                  <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42" value={editItem.size} onChange={e=>setEditItem(p=>({...p,size:e.target.value}))}/></div>
+                  <div><div className="lbl">Material</div><input className="inp" placeholder="Cotton" value={editItem.material} onChange={e=>setEditItem(p=>({...p,material:e.target.value}))}/></div>
+                </div>
+
+                <div style={{marginBottom:16}}>
                   <div className="lbl">Condition</div>
                   <select className="inp" value={editItem.condition} onChange={e=>setEditItem(p=>({...p,condition:e.target.value}))}>
-                    <option value="">Select...</option>
+                    <option value="">Select…</option>
                     {CONDITIONS.map(c=><option key={c}>{c}</option>)}
                   </select>
                 </div>
-                <div>
-                  <div className="lbl">Location in House</div>
-                  <select className="inp" value={editItem.location} onChange={e=>setEditItem(p=>({...p,location:e.target.value}))}>
-                    <option value="">Select...</option>
-                    {LOCATIONS.map(l=><option key={l}>{l}</option>)}
-                  </select>
-                </div>
-              </div>
 
-              {/* Status */}
-              <div style={{marginBottom:14}}>
-                <div className="lbl">Status</div>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {STATUS_OPTIONS.map(s=>(
-                    <button key={s.value} className="btn" onClick={()=>setEditItem(p=>({...p,status:s.value}))}
-                      style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:editItem.status===s.value?s.color:"rgba(255,255,255,.7)",color:editItem.status===s.value?"#fff":G.muted,border:`1.5px solid ${editItem.status===s.value?s.color:G.border}`}}>
-                      {s.icon} {s.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Action Needed */}
-              <div>
-                <div className="lbl">Action Needed</div>
-                <select className="inp" value={editItem.actionNeeded} onChange={e=>setEditItem(p=>({...p,actionNeeded:e.target.value}))}>
-                  {ACTION_NEEDED.map(a=><option key={a}>{a}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* ── SECTION 2: STYLING DETAILS ── */}
-            <div style={{background:"rgba(255,255,255,.5)",border:`1px solid ${G.border}`,borderRadius:14,padding:"20px"}}>
-              <div className="section-header">
-                <span style={{fontSize:18}}>✨</span>
-                <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:700,color:G.text}}>Styling Details</span>
-              </div>
-
-              {/* Style */}
-              <div style={{marginBottom:16}}>
-                <div className="lbl">Style</div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                  {STYLES.map(s=>(
-                    <button key={s} className={`toggle-chip ${editItem.style===s?"active":""}`} onClick={()=>setEditItem(p=>({...p,style:p.style===s?"":s}))}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Season */}
-              <div style={{marginBottom:16}}>
-                <div className="lbl">Season (select all that apply)</div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                  {STYLE_SEASONS.map(s=>(
-                    <button key={s} className={`toggle-chip ${editItem.styleSeason.includes(s)?"active":""}`} onClick={()=>toggleArr("styleSeason",s)}>
-                      {s==="Spring"?"🌸":s==="Summer"?"☀️":s==="Fall"?"🍂":"❄️"} {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Occasion */}
-              <div>
-                <div className="lbl">Occasion (select all that apply)</div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                  {OCCASIONS.map(o=>(
-                    <button key={o} className={`toggle-chip ${editItem.occasion.includes(o)?"active":""}`} onClick={()=>toggleArr("occasion",o)}>
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* ── SECTION 3: ADVANCED / SELLING DETAILS (collapsed) ── */}
-            <div>
-              <button className="advanced-toggle" onClick={()=>setAdvancedOpen(p=>!p)}>
-                <span>📋 Advanced / Selling Details</span>
-                <span style={{fontSize:16,transition:"transform .2s",transform:advancedOpen?"rotate(180deg)":"rotate(0deg)"}}>▾</span>
-              </button>
-              {advancedOpen&&(
-                <div style={{background:"rgba(255,255,255,.5)",border:`1px solid ${G.border}`,borderTop:"none",borderRadius:"0 0 14px 14px",padding:"20px",marginTop:-2}} className="slide">
-                  <div className="g2" style={{marginBottom:14}}>
-                    <div><div className="lbl">When Bought</div><input className="inp" type="date" value={editItem.whenBought} onChange={e=>setEditItem(p=>({...p,whenBought:e.target.value}))}/></div>
-                    <div><div className="lbl">Price ($)</div><input className="inp" type="number" placeholder="0.00" value={editItem.price} onChange={e=>setEditItem(p=>({...p,price:e.target.value}))}/></div>
+                {/* Styling */}
+                <div style={{marginBottom:14}}>
+                  <div className="lbl">Style</div>
+                  <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+                    {STYLES.map(s=><button key={s} className={`toggle-chip ${editItem.style===s?"active":""}`} onClick={()=>setEditItem(p=>({...p,style:p.style===s?"":s}))}>{s}</button>)}
                   </div>
-                  <div className="g2" style={{marginBottom:14}}>
-                    <div><div className="lbl">Sell Link</div><input className="inp" placeholder="https://..." value={editItem.customSellLink} onChange={e=>setEditItem(p=>({...p,customSellLink:e.target.value}))}/></div>
-                    <div><div className="lbl">Donate Link</div><input className="inp" placeholder="https://..." value={editItem.customDonateLink} onChange={e=>setEditItem(p=>({...p,customDonateLink:e.target.value}))}/></div>
-                  </div>
-                  <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Brand, purchase details, memories…" value={editItem.notes} onChange={e=>setEditItem(p=>({...p,notes:e.target.value}))}/></div>
                 </div>
-              )}
-            </div>
+                <div style={{marginBottom:14}}>
+                  <div className="lbl">Season</div>
+                  <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+                    {STYLE_SEASONS.map(s=><button key={s} className={`toggle-chip ${editItem.styleSeason.includes(s)?"active":""}`} onClick={()=>toggleArr("styleSeason",s)}>{s==="Spring"?"🌸":s==="Summer"?"☀️":s==="Fall"?"🍂":"❄️"} {s}</button>)}
+                  </div>
+                </div>
+                <div style={{marginBottom:16}}>
+                  <div className="lbl">Occasion</div>
+                  <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+                    {OCCASIONS.map(o=><button key={o} className={`toggle-chip ${editItem.occasion.includes(o)?"active":""}`} onClick={()=>toggleArr("occasion",o)}>{o}</button>)}
+                  </div>
+                </div>
 
-            {/* Save / Cancel */}
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:4}}>
-              {editItem.id&&<button className="btn" onClick={()=>handleDeleteItem(editItem.id)} style={{background:"#fdecea",color:G.red,padding:"10px 18px",fontSize:12,border:`1px solid ${G.red}44`,fontWeight:600}}>🗑 Delete</button>}
-              <button className="btn" onClick={()=>setView("grid")} style={{background:"rgba(255,255,255,.8)",color:G.muted,padding:"10px 22px",fontSize:12,border:`1px solid ${G.border}`}}>Cancel</button>
-              <button className="btn" onClick={handleSaveItem} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 28px",fontSize:13,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>
-                {saved?"✓ Saved!":editItem.id?"Save Changes":"Add Item ✨"}
+                {/* Selling details */}
+                <div className="g2" style={{marginBottom:14}}>
+                  <div><div className="lbl">When Bought</div><input className="inp" type="date" value={editItem.whenBought} onChange={e=>setEditItem(p=>({...p,whenBought:e.target.value}))}/></div>
+                  <div><div className="lbl">Price ($)</div><input className="inp" type="number" placeholder="0.00" value={editItem.price} onChange={e=>setEditItem(p=>({...p,price:e.target.value}))}/></div>
+                </div>
+                <div className="g2" style={{marginBottom:14}}>
+                  <div><div className="lbl">Sell Link</div><input className="inp" placeholder="https://…" value={editItem.customSellLink} onChange={e=>setEditItem(p=>({...p,customSellLink:e.target.value}))}/></div>
+                  <div><div className="lbl">Donate Link</div><input className="inp" placeholder="https://…" value={editItem.customDonateLink} onChange={e=>setEditItem(p=>({...p,customDonateLink:e.target.value}))}/></div>
+                </div>
+                <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Brand, details, memories…" value={editItem.notes} onChange={e=>setEditItem(p=>({...p,notes:e.target.value}))}/></div>
+              </div>
+            )}
+
+            {/* Delete */}
+            {editItem.id&&(
+              <button className="btn" onClick={()=>handleDeleteItem(editItem.id)} style={{background:"#fdecea",color:G.red,padding:"10px",fontSize:12,border:`1px solid ${G.red}44`,fontWeight:600,width:"100%"}}>
+                🗑 Delete This Item
               </button>
-            </div>
+            )}
+
           </div>
         </div>
       )}
@@ -830,8 +932,6 @@ export default function App() {
                 <img src={item.photo} alt={item.name} style={{maxWidth:"100%",maxHeight:380,objectFit:"contain",display:"block"}}/>
               </div>
             )}
-
-            {/* Header */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
               <div>
                 <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -840,17 +940,13 @@ export default function App() {
                   {item.favorite&&<span style={{fontSize:16}}>⭐</span>}
                 </div>
                 <div className="serif" style={{fontSize:30,fontWeight:700,lineHeight:1.2,color:G.text}}>{item.name}</div>
-                {item.actionNeeded&&item.actionNeeded!=="None"&&(
-                  <div style={{marginTop:6,fontSize:12,color:G.orange,fontWeight:600,background:`${G.orange}12`,padding:"4px 10px",borderRadius:20,display:"inline-block"}}>⚠️ {item.actionNeeded}</div>
-                )}
+                {item.actionNeeded&&item.actionNeeded!=="None"&&<div style={{marginTop:6,fontSize:12,color:G.orange,fontWeight:600,background:`${G.orange}12`,padding:"4px 10px",borderRadius:20,display:"inline-block"}}>⚠️ {item.actionNeeded}</div>}
               </div>
               <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-                <button className="fav-btn" onClick={()=>toggleFavorite(item.id)} title={item.favorite?"Remove from favorites":"Add to favorites"}>{item.favorite?"⭐":"☆"}</button>
+                <button className="fav-btn" onClick={()=>toggleFavorite(item.id)}>{item.favorite?"⭐":"☆"}</button>
                 <button className="btn" onClick={()=>openEditItem(item)} style={{background:"rgba(255,255,255,.8)",color:G.text,padding:"8px 16px",fontSize:12,border:`1px solid ${G.border}`,whiteSpace:"nowrap",fontWeight:600}}>✏️ Edit</button>
               </div>
             </div>
-
-            {/* Status */}
             <div style={{marginBottom:20}}>
               <div className="lbl" style={{marginBottom:10}}>Status</div>
               <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
@@ -862,25 +958,15 @@ export default function App() {
                 ))}
               </div>
             </div>
-
             <div className="divider"/>
-
-            {/* Details grid */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-              {[
-                {l:"Color",v:item.color},{l:"Size",v:item.size},{l:"Material",v:item.material},
-                {l:"Condition",v:item.condition},{l:"Location",v:item.location},
-                {l:"When Bought",v:item.whenBought?new Date(item.whenBought).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}):""},
-                {l:"Purchase Price",v:item.price?`$${parseFloat(item.price).toLocaleString()}`:"",gold:true},
-              ].filter(d=>d.v).map(d=>(
+              {[{l:"Color",v:item.color},{l:"Size",v:item.size},{l:"Material",v:item.material},{l:"Condition",v:item.condition},{l:"Location",v:item.location},{l:"When Bought",v:item.whenBought?new Date(item.whenBought).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}):""},{l:"Purchase Price",v:item.price?`$${parseFloat(item.price).toLocaleString()}`:"",gold:true}].filter(d=>d.v).map(d=>(
                 <div key={d.l} style={{background:"rgba(255,255,255,.7)",borderRadius:10,padding:"10px 13px",border:`1px solid ${G.border}`}}>
                   <div className="lbl" style={{marginBottom:3}}>{d.l}</div>
                   <div style={{fontSize:13,color:d.gold?G.gold:G.text,fontWeight:600}}>{d.v}</div>
                 </div>
               ))}
             </div>
-
-            {/* Styling details */}
             {(item.style||item.styleSeason?.length>0||item.occasion?.length>0)&&(
               <>
                 <div className="lbl" style={{marginBottom:10}}>Styling Details</div>
@@ -893,18 +979,8 @@ export default function App() {
                 </div>
               </>
             )}
-
-            {/* Notes */}
-            {item.notes&&(
-              <>
-                <div className="lbl">Notes</div>
-                <div style={{background:"rgba(255,255,255,.7)",border:`1px solid ${G.border}`,borderRadius:10,padding:14,fontSize:13,color:G.muted,lineHeight:1.7,marginBottom:18,whiteSpace:"pre-wrap"}}>{item.notes}</div>
-              </>
-            )}
-
+            {item.notes&&<><div className="lbl">Notes</div><div style={{background:"rgba(255,255,255,.7)",border:`1px solid ${G.border}`,borderRadius:10,padding:14,fontSize:13,color:G.muted,lineHeight:1.7,marginBottom:18,whiteSpace:"pre-wrap"}}>{item.notes}</div></>}
             <div className="divider"/>
-
-            {/* Actions */}
             <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:18}}>
               <button className="btn" onClick={()=>setLinksModal("sell")} style={{background:`${G.orange}18`,color:G.orange,border:`1px solid ${G.orange}44`,padding:"8px 16px",fontSize:12,fontWeight:600}}>💰 Sell Platforms</button>
               <button className="btn" onClick={()=>setLinksModal("donate")} style={{background:`${G.blue}18`,color:G.blue,border:`1px solid ${G.blue}44`,padding:"8px 16px",fontSize:12,fontWeight:600}}>🤝 Donate To</button>
@@ -935,15 +1011,7 @@ export default function App() {
                 const photoItems=oItems.filter(i=>i.photo);
                 return(
                   <div key={outfit.id} className="card hover-card" onClick={()=>openDetailOutfit(outfit)}>
-                    {photoItems.length>0&&(
-                      <div style={{display:"flex",height:90,overflow:"hidden",background:G.surface}}>
-                        {photoItems.slice(0,3).map(it=>(
-                          <div key={it.id} style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                            <img src={it.photo} alt={it.name} style={{width:"100%",height:"100%",objectFit:"contain"}}/>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    {photoItems.length>0&&<div style={{display:"flex",height:90,overflow:"hidden",background:G.surface}}>{photoItems.slice(0,3).map(it=><div key={it.id} style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={it.photo} alt={it.name} style={{width:"100%",height:"100%",objectFit:"contain"}}/></div>)}</div>}
                     <div style={{padding:"14px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                         <span className="tag" style={{background:`${G.purple}18`,color:G.purple}}>{outfit.occasion||"Outfit"}</span>
@@ -951,9 +1019,7 @@ export default function App() {
                       </div>
                       <div className="serif" style={{fontSize:17,fontWeight:600,marginBottom:8,color:G.text}}>{outfit.name}</div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
-                        {oItems.slice(0,3).map(it=>(
-                          <span key={it.id} style={{background:`${G.terracotta}12`,border:`1px solid ${G.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:G.muted}}>{it.name}</span>
-                        ))}
+                        {oItems.slice(0,3).map(it=><span key={it.id} style={{background:`${G.terracotta}12`,border:`1px solid ${G.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:G.muted}}>{it.name}</span>)}
                         {oItems.length>3&&<span style={{fontSize:11,color:G.dim}}>+{oItems.length-3} more</span>}
                       </div>
                       {outfit.rating>0&&<div style={{fontSize:13}}>{[1,2,3,4,5].map(s=><span key={s}>{s<=outfit.rating?"⭐":"☆"}</span>)}</div>}
@@ -980,27 +1046,16 @@ export default function App() {
             </div>
             <div>
               <div className="lbl">Rating</div>
-              <div style={{display:"flex",gap:4}}>
-                {[1,2,3,4,5].map(s=>(
-                  <span key={s} className="star" onClick={()=>setEditOutfit(p=>({...p,rating:s===p.rating?0:s}))} style={{color:s<=editOutfit.rating?G.gold:G.border}}>{s<=editOutfit.rating?"⭐":"☆"}</span>
-                ))}
-              </div>
+              <div style={{display:"flex",gap:4}}>{[1,2,3,4,5].map(s=><span key={s} className="star" onClick={()=>setEditOutfit(p=>({...p,rating:s===p.rating?0:s}))} style={{color:s<=editOutfit.rating?G.gold:G.border}}>{s<=editOutfit.rating?"⭐":"☆"}</span>)}</div>
             </div>
             <div>
               <div className="lbl" style={{marginBottom:10}}>Select Items for This Outfit</div>
-              {items.length===0?(
-                <div style={{color:G.muted,fontSize:13,padding:14,background:"rgba(255,255,255,.6)",borderRadius:8,border:`1px solid ${G.border}`}}>Add items to your inventory first.</div>
-              ):(
+              {items.length===0?<div style={{color:G.muted,fontSize:13,padding:14,background:"rgba(255,255,255,.6)",borderRadius:8,border:`1px solid ${G.border}`}}>Add items to your inventory first.</div>:(
                 <>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:8,maxHeight:360,overflowY:"auto",padding:2}}>
                     {items.map(it=>{const sel=editOutfit.itemIds.includes(it.id);return(
-                      <div key={it.id} onClick={()=>toggleOutfitItem(it.id)}
-                        style={{background:sel?`${G.green}18`:"rgba(255,255,255,.7)",border:`1.5px solid ${sel?G.green:G.border}`,borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all .18s"}}>
-                        {it.photo&&(
-                          <div style={{height:90,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                            <img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:90,objectFit:"contain"}}/>
-                          </div>
-                        )}
+                      <div key={it.id} onClick={()=>toggleOutfitItem(it.id)} style={{background:sel?`${G.green}18`:"rgba(255,255,255,.7)",border:`1.5px solid ${sel?G.green:G.border}`,borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all .18s"}}>
+                        {it.photo&&<div style={{height:90,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}><img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:90,objectFit:"contain"}}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:9,color:sel?G.green:G.muted,fontWeight:sel?600:400,marginBottom:2,textTransform:"uppercase",letterSpacing:"1px"}}>{it.subcategory||it.category}</div>
                           <div style={{fontSize:12,fontWeight:500,lineHeight:1.3,color:G.text}}>{it.name}</div>
@@ -1014,7 +1069,7 @@ export default function App() {
                 </>
               )}
             </div>
-            <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Describe this look, where you'd wear it…" value={editOutfit.notes} onChange={e=>setEditOutfit(p=>({...p,notes:e.target.value}))}/></div>
+            <div><div className="lbl">Notes</div><textarea className="inp" placeholder="Describe this look…" value={editOutfit.notes} onChange={e=>setEditOutfit(p=>({...p,notes:e.target.value}))}/></div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:4}}>
               {editOutfit.id&&<button className="btn" onClick={()=>handleDeleteOutfit(editOutfit.id)} style={{background:"#fdecea",color:G.red,padding:"9px 18px",fontSize:12,border:`1px solid ${G.red}33`,fontWeight:600}}>🗑 Delete</button>}
               <button className="btn" onClick={()=>setView("outfitGrid")} style={{background:"rgba(255,255,255,.8)",color:G.muted,padding:"9px 22px",fontSize:12,border:`1px solid ${G.border}`}}>Cancel</button>
@@ -1049,11 +1104,7 @@ export default function App() {
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:22}}>
                 {oItems.map(it=>{const st=stInfo(it.status);return(
                   <div key={it.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setPage("inventory");openDetailItem(it);}}>
-                    {it.photo&&(
-                      <div style={{height:110,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                        <img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:110,objectFit:"contain"}}/>
-                      </div>
-                    )}
+                    {it.photo&&<div style={{height:110,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}><img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:110,objectFit:"contain"}}/></div>}
                     <div style={{padding:"10px 12px"}}>
                       <div style={{fontSize:9,color:G.terracotta,marginBottom:2,textTransform:"uppercase",letterSpacing:"1px",fontWeight:600}}>{it.subcategory||it.category}</div>
                       <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:G.text}}>{it.name}</div>
@@ -1066,8 +1117,7 @@ export default function App() {
             {outfit.notes&&<><div className="lbl">Notes</div><div style={{background:"rgba(255,255,255,.7)",border:`1px solid ${G.border}`,borderRadius:10,padding:14,fontSize:13,color:G.muted,lineHeight:1.7,marginBottom:18,whiteSpace:"pre-wrap"}}>{outfit.notes}</div></>}
             <div className="divider"/>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button className="btn" onClick={()=>{setShopQuery(`items to complete my ${outfit.name} outfit${outfit.occasion?" for "+outfit.occasion:""}`);setPage("shop");}}
-                style={{background:`${G.purple}18`,color:G.purple,border:`1px solid ${G.purple}44`,padding:"9px 18px",fontSize:12,fontWeight:600}}>🛍 Find Items to Complete This Outfit</button>
+              <button className="btn" onClick={()=>{setShopQuery(`items to complete my ${outfit.name} outfit${outfit.occasion?" for "+outfit.occasion:""}`);setPage("shop");}} style={{background:`${G.purple}18`,color:G.purple,border:`1px solid ${G.purple}44`,padding:"9px 18px",fontSize:12,fontWeight:600}}>🛍 Find Items to Complete This Outfit</button>
               <button className="btn" onClick={()=>handleDeleteOutfit(outfit.id)} style={{background:"#fdecea",color:G.red,padding:"9px 18px",fontSize:12,border:`1px solid ${G.red}33`,fontWeight:600}}>🗑 Delete</button>
             </div>
           </div>
@@ -1080,11 +1130,8 @@ export default function App() {
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>Shop & Discover 🛍</div>
           <div style={{color:G.muted,fontSize:13,marginBottom:24}}>AI-powered suggestions tailored to your wardrobe & home</div>
           <div style={{display:"flex",gap:10,marginBottom:24,flexWrap:"wrap"}}>
-            <input className="inp" placeholder="e.g. sweater to match my beige dress…"
-              value={shopQuery} onChange={e=>setShopQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleShopSearch()}
-              style={{flex:1,minWidth:200,fontSize:14}}/>
-            <button className="btn" onClick={handleShopSearch} disabled={shopLoading}
-              style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 24px",fontSize:13,fontWeight:700,opacity:shopLoading?.7:1,whiteSpace:"nowrap",boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>
+            <input className="inp" placeholder="e.g. sweater to match my beige dress…" value={shopQuery} onChange={e=>setShopQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleShopSearch()} style={{flex:1,minWidth:200,fontSize:14}}/>
+            <button className="btn" onClick={handleShopSearch} disabled={shopLoading} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 24px",fontSize:13,fontWeight:700,opacity:shopLoading?.7:1,whiteSpace:"nowrap",boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>
               {shopLoading?"Searching…":"🔍 Find Items"}
             </button>
           </div>
@@ -1097,12 +1144,7 @@ export default function App() {
             </div>
           </div>
           {shopError&&<div style={{background:"#fdecea",border:`1px solid ${G.red}44`,borderRadius:8,padding:"12px 16px",color:G.red,fontSize:13,marginBottom:20}}>{shopError}</div>}
-          {shopLoading&&(
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"60px 20px",gap:16}}>
-              <div className="spin" style={{width:38,height:38,border:`3px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
-              <div style={{color:G.muted,fontSize:13}}>Finding the best matches for your wardrobe…</div>
-            </div>
-          )}
+          {shopLoading&&<div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"60px 20px",gap:16}}><div className="spin" style={{width:38,height:38,border:`3px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/><div style={{color:G.muted,fontSize:13}}>Finding the best matches for your wardrobe…</div></div>}
           {shopResults.length>0&&(
             <div style={{marginBottom:32}}>
               <div className="serif" style={{fontSize:20,fontWeight:600,marginBottom:14,color:G.text}}>Suggestions for "{shopQuery}"</div>
@@ -1111,9 +1153,7 @@ export default function App() {
                   const inWL=wishlist.some(w=>w.title===r.title);
                   return(
                     <div key={i} className="card" style={{padding:"18px"}}>
-                      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
-                        {(r.tags||[]).map(t=><span key={t} className="tag" style={{background:`${G.terracotta}15`,color:G.terracotta,fontSize:9}}>{t}</span>)}
-                      </div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>{(r.tags||[]).map(t=><span key={t} className="tag" style={{background:`${G.terracotta}15`,color:G.terracotta,fontSize:9}}>{t}</span>)}</div>
                       <div className="serif" style={{fontSize:16,fontWeight:600,marginBottom:6,lineHeight:1.3,color:G.text}}>{r.title}</div>
                       <div style={{fontSize:12,color:G.muted,lineHeight:1.6,marginBottom:12}}>{r.description}</div>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -1124,8 +1164,7 @@ export default function App() {
                         <a href={r.searchUrl||`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(r.title)}`} target="_blank" rel="noreferrer" style={{textDecoration:"none",flex:1}}>
                           <button className="btn" style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"7px 14px",fontSize:11,fontWeight:700,width:"100%"}}>Shop Now →</button>
                         </a>
-                        <button className="btn" onClick={()=>inWL?removeFromWishlist(wishlist.find(w=>w.title===r.title)?.id):addToWishlist(r)}
-                          style={{background:inWL?`${G.green}18`:"rgba(255,255,255,.7)",color:inWL?G.green:G.muted,border:`1px solid ${inWL?G.green:G.border}`,padding:"7px 12px",fontSize:13,fontWeight:600}}>
+                        <button className="btn" onClick={()=>inWL?removeFromWishlist(wishlist.find(w=>w.title===r.title)?.id):addToWishlist(r)} style={{background:inWL?`${G.green}18`:"rgba(255,255,255,.7)",color:inWL?G.green:G.muted,border:`1px solid ${inWL?G.green:G.border}`,padding:"7px 12px",fontSize:13,fontWeight:600}}>
                           {inWL?"✓":"♡"}
                         </button>
                       </div>
