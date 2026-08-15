@@ -18,7 +18,6 @@ const SUBCATEGORIES = {
   Sports:["Gym Equipment","Outdoor","Water Sports","Team Sports","Cycling","Yoga","Other"],
 };
 
-// Map subcategory → friendly item type word
 const SUBCAT_TYPE = {
   "Dresses":"Dress","Tops & Blouses":"Top","Sweaters":"Sweater","Tees & Tanks":"Top",
   "Pants":"Pants","Jeans":"Jeans","Jackets & Coats":"Jacket","Skirts":"Skirt",
@@ -72,13 +71,14 @@ const G={
   yellow:"#c9a04a",red:"#c46a5a",terracotta:"#c1603a",cream:"#fdf8f0",
 };
 
+// ── CHANGE 1: emptyItem now includes _photoPath ──────────────────────────────
 const emptyItem={
   id:null,category:"",subcategory:"",name:"",favorite:false,
   color:"",size:"",material:"",condition:"",location:"",
   status:"keep",actionNeeded:"None",
   style:"",styleSeason:[],occasion:[],
   whenBought:"",price:"",customSellLink:"",customDonateLink:"",notes:"",
-  photo:null,
+  photo:null,_photoPath:null,
 };
 const emptyOutfit={id:null,name:"",occasion:"",season:"All Seasons",itemIds:[],notes:"",rating:0};
 
@@ -100,25 +100,21 @@ function resizeImage(base64,maxSize=900){
   });
 }
 
-// ── Smart name builder ──────────────────────────────────────────────────────
 function cap(s){return s?s.split(" ").map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(" "):""}
 
 function buildName(opts){
-  // opts: { color, material, fit, itemType, category, subcategory }
   const itemType = opts.itemType
     || SUBCAT_TYPE[opts.subcategory]
     || CAT_TYPE[opts.category]
     || "Item";
   const parts=[];
   if(opts.color) parts.push(cap(opts.color));
-  // one optional descriptor — material first, then fit
   const descriptor = opts.material || opts.fit || "";
   if(descriptor && descriptor.length<=12) parts.push(cap(descriptor));
   parts.push(cap(itemType));
   return parts.filter(Boolean).join(" ");
 }
 
-// ── AI photo analysis ───────────────────────────────────────────────────────
 async function analyzePhoto(base64){
   const data64=base64.split(",")[1];
   const res=await fetch("https://api.anthropic.com/v1/messages",{
@@ -195,11 +191,9 @@ export default function App(){
   const [lightbox,setLightbox]=useState(null);
   const [dbLoading,setDbLoading]=useState(false);
   const [advancedOpen,setAdvancedOpen]=useState(false);
-
-  // AI capture state
   const [aiRunning,setAiRunning]=useState(false);
   const [aiDone,setAiDone]=useState(false);
-  const [aiHint,setAiHint]=useState(""); // soft message, never blocking
+  const [aiHint,setAiHint]=useState("");
   const [aiData,setAiData]=useState(null);
   const [nameUserEdited,setNameUserEdited]=useState(false);
 
@@ -228,7 +222,33 @@ export default function App(){
     setDbLoading(false);
   }
 
-  function dbToItem(r){return{id:r.id,category:r.category||"",subcategory:r.subcategory||"",name:r.name||"",favorite:r.favorite||false,color:r.color||"",size:r.size||"",material:r.material||"",condition:r.condition||"",location:r.location||"",status:r.status||"keep",actionNeeded:r.action_needed||"None",style:r.style||"",styleSeason:r.style_season||[],occasion:r.occasion||[],whenBought:r.when_bought||"",price:r.price||"",customSellLink:r.custom_sell_link||"",customDonateLink:r.custom_donate_link||"",notes:r.notes||"",photo:r.photo||null};}
+  // ── CHANGE 2: dbToItem now extracts _photoPath from Storage URLs ─────────
+  function dbToItem(r){
+    const photo = r.photo || null;
+    // Detect if this is a Supabase Storage URL (new) or base64 (old)
+    const isStorageUrl = photo && photo.startsWith("http") && photo.includes("supabase");
+    const photoPath = isStorageUrl
+      ? (() => {
+          try {
+            const u = new URL(photo);
+            const parts = u.pathname.split("/item-photos/");
+            return parts.length > 1 ? parts[1] : null;
+          } catch { return null; }
+        })()
+      : null;
+    return {
+      id:r.id, category:r.category||"", subcategory:r.subcategory||"",
+      name:r.name||"", favorite:r.favorite||false,
+      color:r.color||"", size:r.size||"", material:r.material||"",
+      condition:r.condition||"", location:r.location||"",
+      status:r.status||"keep", actionNeeded:r.action_needed||"None",
+      style:r.style||"", styleSeason:r.style_season||[], occasion:r.occasion||[],
+      whenBought:r.when_bought||"", price:r.price||"",
+      customSellLink:r.custom_sell_link||"", customDonateLink:r.custom_donate_link||"",
+      notes:r.notes||"", photo:photo, _photoPath:photoPath,
+    };
+  }
+
   function dbToOutfit(r){return{id:r.id,name:r.name||"",occasion:r.occasion||"",season:r.season||"All Seasons",itemIds:r.item_ids||[],notes:r.notes||"",rating:r.rating||0};}
   function itemToDb(item){return{id:item.id,user_id:user.id,category:item.category,subcategory:item.subcategory,name:item.name,favorite:item.favorite,color:item.color,size:item.size,material:item.material,condition:item.condition,location:item.location,status:item.status,action_needed:item.actionNeeded,style:item.style,style_season:item.styleSeason,occasion:item.occasion,when_bought:item.whenBought,price:item.price,custom_sell_link:item.customSellLink,custom_donate_link:item.customDonateLink,notes:item.notes,photo:item.photo};}
   function outfitToDb(o){return{id:o.id,user_id:user.id,name:o.name,occasion:o.occasion,season:o.season,item_ids:o.itemIds,notes:o.notes,rating:o.rating};}
@@ -237,10 +257,8 @@ export default function App(){
   const stInfo=v=>STATUS_OPTIONS.find(s=>s.value===v)||STATUS_OPTIONS[0];
   const toggleArr=(field,val)=>setEditItem(p=>({...p,[field]:p[field].includes(val)?p[field].filter(x=>x!==val):[...p[field],val]}));
 
-  // ── Auto-name logic ─────────────────────────────────────────────────────
-  // Call this whenever we have new info and user hasn't manually edited
   function applyAutoName(patch, currentItem, ai){
-    if(nameUserEdited) return patch; // never overwrite user edits
+    if(nameUserEdited) return patch;
     const merged = {...currentItem,...patch};
     const name = buildName({
       color:    ai?.color    || merged.color,
@@ -253,7 +271,6 @@ export default function App(){
     return {...patch, name};
   }
 
-  // ── Category / subcategory change ───────────────────────────────────────
   const handleCategoryChange=cat=>{
     setEditItem(p=>{
       const patch={category:cat,subcategory:""};
@@ -282,26 +299,48 @@ export default function App(){
     });
   };
 
-  // ── Photo handler ────────────────────────────────────────────────────────
+  // ── CHANGE 3: handlePhotoFile uploads to Supabase Storage ───────────────
   const handlePhotoFile=async(file)=>{
     if(!file) return;
-    setAiHint("");setAiDone(false);setAiData(null);
+    setAiHint("");setAiDone(false);setAiData(null);setNameUserEdited(false);
 
     const reader=new FileReader();
     reader.onload=async(ev)=>{
-      // 1. Show photo immediately
+      // 1. Show local preview immediately — fast, no waiting
       const resized=await resizeImage(ev.target.result,900);
-
-      // 2. Set photo + immediate fallback name (using category/sub if available)
       setEditItem(p=>{
-        const patch={photo:resized};
-        const immediateNamePatch=applyAutoName(patch,p,null);
-        return {...p,...immediateNamePatch};
+        const patch={photo:resized,_photoPath:null};
+        return {...p,...applyAutoName(patch,p,null)};
       });
 
-      // 3. Run AI in background — never blocks
       setAiRunning(true);
       try{
+        // 2. Upload to Supabase Storage
+        const fileExt = (file.name?.split(".").pop() || "jpg").toLowerCase();
+        const fileName = `${user.id}/${uid()}.${fileExt}`;
+        const blob = await (await fetch(resized)).blob();
+
+        const { error: uploadError } = await supabase.storage
+          .from("item-photos")
+          .upload(fileName, blob, {
+            contentType: "image/jpeg",
+            upsert: false,
+          });
+
+        if(uploadError){
+          console.error("Storage upload error:", uploadError);
+          // Keep local preview as fallback — app still works
+        } else {
+          // 3. Get the permanent public URL
+          const { data: { publicUrl } } = supabase.storage
+            .from("item-photos")
+            .getPublicUrl(fileName);
+
+          // Replace local preview with permanent Storage URL
+          setEditItem(p=>({...p, photo:publicUrl, _photoPath:fileName}));
+        }
+
+        // 4. Run AI analysis on the resized image (parallel to upload)
         const small=await resizeImage(ev.target.result,800);
         const result=await analyzePhoto(small);
         setAiData(result);
@@ -316,14 +355,12 @@ export default function App(){
             condition:  result.condition   || p.condition,
             notes:      result.notes       || p.notes,
           };
-          // Auto-name using fresh AI data
           return {...p,...applyAutoName(patch,p,result)};
         });
         setAiDone(true);
         setAiHint("✨ We added what we can — adjust if needed.");
       }catch(err){
-        console.error(err);
-        // Soft fallback — never blocking message
+        console.error("Photo or AI error:", err);
         setAiHint("We added what we can — you can adjust if needed.");
       }
       setAiRunning(false);
@@ -348,7 +385,6 @@ export default function App(){
   const openDetailItem=it=>{setSelItem(it);setView("detail");};
 
   const handleSaveItem=async()=>{
-    // Always ensure a name before saving
     const finalName = editItem.name.trim() || buildName({category:editItem.category,subcategory:editItem.subcategory}) || "Item";
     const itemToSave={...editItem,name:finalName};
     const isNew=!itemToSave.id;
@@ -357,7 +393,22 @@ export default function App(){
     await supabase.from("items").upsert(itemToDb(item));
     flash();setView("grid");
   };
-  const handleDeleteItem=async id=>{setItems(items.filter(i=>i.id!==id));await supabase.from("items").delete().eq("id",id);setView("grid");};
+
+  // ── CHANGE 4: handleDeleteItem also removes photo from Storage ───────────
+  const handleDeleteItem=async id=>{
+    const item=items.find(i=>i.id===id);
+    // Remove from Storage if we have the path
+    if(item?._photoPath){
+      const { error } = await supabase.storage
+        .from("item-photos")
+        .remove([item._photoPath]);
+      if(error) console.error("Could not delete photo from storage:", error);
+    }
+    setItems(items.filter(i=>i.id!==id));
+    await supabase.from("items").delete().eq("id",id);
+    setView("grid");
+  };
+
   const updateStatus=async(id,status)=>{
     const n=items.map(i=>i.id===id?{...i,status}:i);setItems(n);
     if(selItem?.id===id)setSelItem(p=>({...p,status}));
@@ -455,7 +506,6 @@ export default function App(){
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
   `;
 
-  // ── LOADING ──
   if(checkingAuth)return(
     <div style={{minHeight:"100vh",background:G.bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&display=swap');@keyframes sp{to{transform:rotate(360deg)}}`}</style>
@@ -467,7 +517,6 @@ export default function App(){
     </div>
   );
 
-  // ── LOGIN ──
   if(!user)return(
     <div style={{minHeight:"100vh",background:`linear-gradient(135deg,#f5ede0 0%,#ead5bc 40%,#e8c9a8 100%)`,display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'Jost',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap');*{box-sizing:border-box;margin:0;padding:0}.btn{cursor:pointer;border:none;border-radius:8px;font-family:'Jost',sans-serif;font-weight:600;transition:all .18s}.btn:hover{opacity:.88;transform:translateY(-1px)}.inp{background:rgba(255,255,255,.7);border:1.5px solid ${G.border};color:${G.text};border-radius:8px;padding:12px 16px;font-family:'Jost',sans-serif;font-size:14px;width:100%;transition:border .18s;outline:none}.inp:focus{border-color:${G.terracotta};background:rgba(255,255,255,.95)}.inp::placeholder{color:${G.dim}}@keyframes sp{to{transform:rotate(360deg)}}@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
@@ -499,12 +548,10 @@ export default function App(){
     </div>
   );
 
-  // ── MAIN APP ──
   return(
     <div style={{minHeight:"100vh",background:G.bg,color:G.text,fontFamily:"'Jost',sans-serif"}}>
       <style>{css}</style>
 
-      {/* NAV */}
       <nav style={{background:`linear-gradient(135deg,#e8d5bc,#f0e4d0)`,borderBottom:`1px solid ${G.border}`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,flexWrap:"wrap",gap:10,boxShadow:"0 2px 12px rgba(139,90,43,.12)"}}>
         <div>
           <div className="serif" style={{fontSize:24,fontWeight:700,color:G.text}}><span style={{color:G.terracotta}}>MAISON</span> <span style={{color:G.gold}}>INVENTORY</span></div>
@@ -525,7 +572,6 @@ export default function App(){
 
       {dbLoading&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"12px",background:`linear-gradient(135deg,#f5ede0,#ead5bc)`,borderBottom:`1px solid ${G.border}`,fontSize:13,color:G.muted}}><div className="spin" style={{width:16,height:16,border:`2px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>Loading your inventory…</div>}
 
-      {/* STATS */}
       {page==="inventory"&&view==="grid"&&!dbLoading&&(
         <div style={{display:"flex",gap:10,padding:"14px 24px",overflowX:"auto",borderBottom:`1px solid ${G.border}`,background:`linear-gradient(135deg,#f5ede0,#ead5bc)`}}>
           {[{l:"Total",v:items.length,icon:"📦"},{l:"Favorites",v:items.filter(i=>i.favorite).length,icon:"⭐",c:G.gold},{l:"To Sell",v:items.filter(i=>i.status==="sell").length,icon:"💰",c:G.orange},{l:"To Donate",v:items.filter(i=>i.status==="donate").length,icon:"🤝",c:G.blue},{l:"To Keep",v:items.filter(i=>i.status==="keep").length,icon:"♡",c:G.green},{l:"Est. Value",v:"$"+items.filter(i=>i.price).reduce((a,i)=>a+(parseFloat(i.price)||0),0).toLocaleString(),icon:"✨"},{l:"Outfits",v:outfits.length,icon:"👗",c:G.purple}].map(s=>(
@@ -534,7 +580,6 @@ export default function App(){
         </div>
       )}
 
-      {/* INVENTORY GRID */}
       {page==="inventory"&&view==="grid"&&(
         <div className="slide">
           <div style={{display:"flex",gap:8,flexWrap:"wrap",padding:"16px 24px 10px",alignItems:"center",background:G.surface,borderBottom:`1px solid ${G.border}`}}>
@@ -555,7 +600,7 @@ export default function App(){
                 {filteredItems.map(item=>{const st=stInfo(item.status);return(
                   <div key={item.id} className="card hover-card" onClick={()=>openDetailItem(item)} style={{position:"relative"}}>
                     {item.favorite&&<div style={{position:"absolute",top:8,right:8,zIndex:2,fontSize:16,filter:"drop-shadow(0 1px 2px rgba(0,0,0,.3))"}}>⭐</div>}
-                    {item.photo?<div style={{height:200,overflow:"hidden",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center"}}><img src={item.photo} alt={item.name} style={{width:"100%",height:"100%",objectFit:"contain",background:G.surface}}/></div>:<div style={{height:90,background:`linear-gradient(135deg,${G.surface},${G.border}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>📦</div>}
+                    {item.photo?<div style={{height:200,overflow:"hidden",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center"}}><img src={item.photo} alt={item.name} style={{width:"100%",height:"100%",objectFit:"contain",background:G.surface}} loading="lazy"/></div>:<div style={{height:90,background:`linear-gradient(135deg,${G.surface},${G.border}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>📦</div>}
                     <div style={{padding:"14px 14px 10px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                         <div style={{display:"flex",gap:4,flexWrap:"wrap"}}><span className="tag" style={{background:`${G.terracotta}18`,color:G.terracotta,fontSize:9}}>{item.category||"Item"}</span>{item.subcategory&&<span className="tag" style={{background:`${G.gold}18`,color:G.gold,fontSize:9}}>{item.subcategory}</span>}</div>
@@ -576,33 +621,17 @@ export default function App(){
         </div>
       )}
 
-      {/* ══════════════════════════════════════
-          ITEM FORM
-      ══════════════════════════════════════ */}
       {page==="inventory"&&view==="form"&&(
         <div style={{maxWidth:700,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>{editItem.id?"Edit Item ✏️":"Add New Item ✨"}</div>
-          <div style={{color:G.muted,fontSize:13,marginBottom:24}}>
-            {editItem.id?"Update details below":"📸 Take a photo — AI fills in the details automatically!"}
-          </div>
-
+          <div style={{color:G.muted,fontSize:13,marginBottom:24}}>{editItem.id?"Update details below":"📸 Take a photo — AI fills in the details automatically!"}</div>
           <div style={{display:"flex",flexDirection:"column",gap:20}}>
-
-            {/* ── SECTION 1: QUICK ADD ── */}
             <div className="sbox">
               <div className="stitle">
                 <span>📸</span> Quick Add
-                {/* AI status pill — purely informational, never blocking */}
-                {aiRunning&&(
-                  <span className="ai-pill">
-                    <span className="spin" style={{width:10,height:10,border:`1.5px solid rgba(193,96,58,.3)`,borderTopColor:G.terracotta,borderRadius:"50%",display:"inline-block"}}/>
-                    Analysing…
-                  </span>
-                )}
+                {aiRunning&&<span className="ai-pill"><span className="spin" style={{width:10,height:10,border:`1.5px solid rgba(193,96,58,.3)`,borderTopColor:G.terracotta,borderRadius:"50%",display:"inline-block"}}/>Uploading &amp; Analysing…</span>}
                 {aiDone&&!aiRunning&&<span className="ai-pill">✨ AI filled</span>}
               </div>
-
-              {/* PHOTO */}
               <input ref={cameraRef}  type="file" accept="image/*" capture="environment" onChange={e=>handlePhotoFile(e.target.files[0])} style={{display:"none"}}/>
               <input ref={galleryRef} type="file" accept="image/*" onChange={e=>handlePhotoFile(e.target.files[0])} style={{display:"none"}}/>
               <div style={{marginBottom:16}}>
@@ -610,15 +639,13 @@ export default function App(){
                   <div style={{borderRadius:12,overflow:"hidden",border:`1px solid ${G.border}`,background:G.surface}}>
                     <div style={{position:"relative",background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",minHeight:240,maxHeight:360}}>
                       <img src={editItem.photo} alt="item" style={{maxWidth:"100%",maxHeight:360,objectFit:"contain",display:"block"}}/>
-                      {/* Subtle overlay while AI runs — does NOT block interaction */}
                       {aiRunning&&(
                         <div style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"rgba(242,235,224,.92)",borderRadius:20,padding:"6px 14px",display:"flex",alignItems:"center",gap:8,pointerEvents:"none"}}>
                           <div className="spin" style={{width:14,height:14,border:`2px solid ${G.border}`,borderTopColor:G.terracotta,borderRadius:"50%"}}/>
-                          <span style={{fontSize:12,color:G.terracotta,fontWeight:600}}>Analysing…</span>
+                          <span style={{fontSize:12,color:G.terracotta,fontWeight:600}}>Uploading &amp; Analysing…</span>
                         </div>
                       )}
                     </div>
-                    {/* AI detected tags — shown after AI finishes */}
                     {!aiRunning&&aiDone&&(editItem.category||editItem.color||editItem.material)&&(
                       <div style={{padding:"8px 12px",background:`${G.terracotta}10`,borderTop:`1px solid ${G.border}`}}>
                         <div style={{fontSize:11,color:G.terracotta,fontWeight:700,marginBottom:5}}>✨ AI detected:</div>
@@ -632,16 +659,11 @@ export default function App(){
                         </div>
                       </div>
                     )}
-                    {/* Soft hint — never an error message */}
-                    {aiHint&&!aiRunning&&(
-                      <div style={{padding:"7px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`,fontSize:11,color:G.muted}}>
-                        {aiHint}
-                      </div>
-                    )}
+                    {aiHint&&!aiRunning&&<div style={{padding:"7px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`,fontSize:11,color:G.muted}}>{aiHint}</div>}
                     <div style={{display:"flex",gap:8,padding:"10px 12px",background:"rgba(255,255,255,.6)",borderTop:`1px solid ${G.border}`}}>
                       <button className="btn" onClick={()=>cameraRef.current.click()}  style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>📷 Camera</button>
                       <button className="btn" onClick={()=>galleryRef.current.click()} style={{flex:1,background:"rgba(255,255,255,.9)",color:G.text,padding:"8px",fontSize:11,fontWeight:600,border:`1px solid ${G.border}`}}>🖼 Gallery</button>
-                      <button className="btn" onClick={()=>{setEditItem(p=>({...p,photo:null}));setAiDone(false);setAiData(null);setAiHint("");}} style={{background:"#fdecea",color:G.red,padding:"8px 14px",fontSize:11,fontWeight:600,border:`1px solid ${G.red}33`}}>✕</button>
+                      <button className="btn" onClick={()=>{setEditItem(p=>({...p,photo:null,_photoPath:null}));setAiDone(false);setAiData(null);setAiHint("");}} style={{background:"#fdecea",color:G.red,padding:"8px 14px",fontSize:11,fontWeight:600,border:`1px solid ${G.red}33`}}>✕</button>
                     </div>
                   </div>
                 ):(
@@ -662,119 +684,48 @@ export default function App(){
                   </div>
                 )}
               </div>
-
-              {/* CATEGORY + SUBCATEGORY */}
               <div className="g2" style={{marginBottom:14}}>
-                <div>
-                  <div className="lbl">Category *</div>
-                  <select className="inp" value={editItem.category} onChange={e=>handleCategoryChange(e.target.value)}>
-                    <option value="">Select...</option>
-                    {CATEGORIES.map(c=><option key={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div className="lbl">Subcategory</div>
-                  <select className="inp" value={editItem.subcategory} onChange={e=>handleSubcategoryChange(e.target.value)} disabled={!SUBCATEGORIES[editItem.category]}>
-                    <option value="">Select...</option>
-                    {(SUBCATEGORIES[editItem.category]||[]).map(s=><option key={s}>{s}</option>)}
-                  </select>
-                </div>
+                <div><div className="lbl">Category *</div><select className="inp" value={editItem.category} onChange={e=>handleCategoryChange(e.target.value)}><option value="">Select...</option>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></div>
+                <div><div className="lbl">Subcategory</div><select className="inp" value={editItem.subcategory} onChange={e=>handleSubcategoryChange(e.target.value)} disabled={!SUBCATEGORIES[editItem.category]}><option value="">Select...</option>{(SUBCATEGORIES[editItem.category]||[]).map(s=><option key={s}>{s}</option>)}</select></div>
               </div>
-
-              {/* ITEM NAME — always has a value, never empty */}
               <div style={{marginBottom:14}}>
                 <div className="lbl">Item Name</div>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <input
-                    className="inp"
-                    placeholder="e.g. Black Leather Jacket"
-                    value={editItem.name}
-                    onChange={e=>handleNameChange(e.target.value)}
-                    style={{flex:1,fontSize:14,fontWeight:600,
-                      borderColor: aiRunning ? G.gold+"88" : undefined,
-                      transition:"border-color .3s"
-                    }}
-                  />
-                  <button className="fav" onClick={()=>setEditItem(p=>({...p,favorite:!p.favorite}))} title="Favorite">
-                    {editItem.favorite?"⭐":"☆"}
-                  </button>
+                  <input className="inp" placeholder="e.g. Black Leather Jacket" value={editItem.name} onChange={e=>handleNameChange(e.target.value)} style={{flex:1,fontSize:14,fontWeight:600,borderColor:aiRunning?G.gold+"88":undefined,transition:"border-color .3s"}}/>
+                  <button className="fav" onClick={()=>setEditItem(p=>({...p,favorite:!p.favorite}))} title="Favorite">{editItem.favorite?"⭐":"☆"}</button>
                 </div>
-                {/* Subtle hint row below name — no error language */}
                 <div className="name-hint">
-                  {aiRunning&&(
-                    <span style={{color:G.gold,fontWeight:600,animation:"pulse 1.4s infinite"}}>✨ Generating name…</span>
-                  )}
-                  {!aiRunning&&aiDone&&!nameUserEdited&&(
-                    <span style={{color:G.green,fontWeight:600}}>✓ Auto-generated</span>
-                  )}
-                  {!aiRunning&&nameUserEdited&&aiData&&(
-                    <button className="btn" onClick={regenerateName} style={{background:"rgba(255,255,255,.7)",color:G.terracotta,border:`1px solid ${G.terracotta}44`,padding:"3px 10px",fontSize:10,fontWeight:600}}>
-                      ↩ Restore AI name
-                    </button>
-                  )}
+                  {aiRunning&&<span style={{color:G.gold,fontWeight:600,animation:"pulse 1.4s infinite"}}>✨ Generating name…</span>}
+                  {!aiRunning&&aiDone&&!nameUserEdited&&<span style={{color:G.green,fontWeight:600}}>✓ Auto-generated</span>}
+                  {!aiRunning&&nameUserEdited&&aiData&&<button className="btn" onClick={regenerateName} style={{background:"rgba(255,255,255,.7)",color:G.terracotta,border:`1px solid ${G.terracotta}44`,padding:"3px 10px",fontSize:10,fontWeight:600}}>↩ Restore AI name</button>}
                   <span style={{color:G.dim}}>{editItem.favorite?"⭐ Favorite":"☆ Tap star to favorite"}</span>
                 </div>
               </div>
-
-              {/* COLOR, SIZE, MATERIAL */}
               <div className="g3" style={{marginBottom:14}}>
                 <div><div className="lbl">Color</div><input className="inp" placeholder="Navy Blue" value={editItem.color} onChange={e=>setEditItem(p=>({...p,color:e.target.value}))}/></div>
                 <div><div className="lbl">Size</div><input className="inp" placeholder="M, 42, 10L" value={editItem.size} onChange={e=>setEditItem(p=>({...p,size:e.target.value}))}/></div>
                 <div><div className="lbl">Material</div><input className="inp" placeholder="Cotton, Silk" value={editItem.material} onChange={e=>setEditItem(p=>({...p,material:e.target.value}))}/></div>
               </div>
-
-              {/* CONDITION + LOCATION */}
               <div className="g2" style={{marginBottom:14}}>
                 <div><div className="lbl">Condition</div><select className="inp" value={editItem.condition} onChange={e=>setEditItem(p=>({...p,condition:e.target.value}))}><option value="">Select...</option>{CONDITIONS.map(c=><option key={c}>{c}</option>)}</select></div>
                 <div><div className="lbl">Location in House</div><select className="inp" value={editItem.location} onChange={e=>setEditItem(p=>({...p,location:e.target.value}))}><option value="">Select...</option>{LOCATIONS.map(l=><option key={l}>{l}</option>)}</select></div>
               </div>
-
-              {/* STATUS */}
               <div style={{marginBottom:14}}>
                 <div className="lbl">Status</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {STATUS_OPTIONS.map(s=>(
-                    <button key={s.value} className="btn" onClick={()=>setEditItem(p=>({...p,status:s.value}))}
-                      style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:editItem.status===s.value?s.color:"rgba(255,255,255,.7)",color:editItem.status===s.value?"#fff":G.muted,border:`1.5px solid ${editItem.status===s.value?s.color:G.border}`}}>
-                      {s.icon} {s.label}
-                    </button>
-                  ))}
+                  {STATUS_OPTIONS.map(s=><button key={s.value} className="btn" onClick={()=>setEditItem(p=>({...p,status:s.value}))} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:editItem.status===s.value?s.color:"rgba(255,255,255,.7)",color:editItem.status===s.value?"#fff":G.muted,border:`1.5px solid ${editItem.status===s.value?s.color:G.border}`}}>{s.icon} {s.label}</button>)}
                 </div>
               </div>
-
-              {/* ACTION NEEDED */}
-              <div>
-                <div className="lbl">Action Needed</div>
-                <select className="inp" value={editItem.actionNeeded} onChange={e=>setEditItem(p=>({...p,actionNeeded:e.target.value}))}>
-                  {ACTION_NEEDED.map(a=><option key={a}>{a}</option>)}
-                </select>
-              </div>
+              <div><div className="lbl">Action Needed</div><select className="inp" value={editItem.actionNeeded} onChange={e=>setEditItem(p=>({...p,actionNeeded:e.target.value}))}>{ACTION_NEEDED.map(a=><option key={a}>{a}</option>)}</select></div>
             </div>
 
-            {/* ── SECTION 2: STYLING DETAILS ── */}
             <div className="sbox">
               <div className="stitle"><span>✨</span> Styling Details</div>
-              <div style={{marginBottom:14}}>
-                <div className="lbl">Style</div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                  {STYLES.map(s=><button key={s} className={`tc ${editItem.style===s?"on":""}`} onClick={()=>setEditItem(p=>({...p,style:p.style===s?"":s}))}>{s}</button>)}
-                </div>
-              </div>
-              <div style={{marginBottom:14}}>
-                <div className="lbl">Season</div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                  {STYLE_SEASONS.map(s=><button key={s} className={`tc ${editItem.styleSeason.includes(s)?"on":""}`} onClick={()=>toggleArr("styleSeason",s)}>{s==="Spring"?"🌸":s==="Summer"?"☀️":s==="Fall"?"🍂":"❄️"} {s}</button>)}
-                </div>
-              </div>
-              <div>
-                <div className="lbl">Occasion</div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                  {OCCASIONS.map(o=><button key={o} className={`tc ${editItem.occasion.includes(o)?"on":""}`} onClick={()=>toggleArr("occasion",o)}>{o}</button>)}
-                </div>
-              </div>
+              <div style={{marginBottom:14}}><div className="lbl">Style</div><div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{STYLES.map(s=><button key={s} className={`tc ${editItem.style===s?"on":""}`} onClick={()=>setEditItem(p=>({...p,style:p.style===s?"":s}))}>{s}</button>)}</div></div>
+              <div style={{marginBottom:14}}><div className="lbl">Season</div><div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{STYLE_SEASONS.map(s=><button key={s} className={`tc ${editItem.styleSeason.includes(s)?"on":""}`} onClick={()=>toggleArr("styleSeason",s)}>{s==="Spring"?"🌸":s==="Summer"?"☀️":s==="Fall"?"🍂":"❄️"} {s}</button>)}</div></div>
+              <div><div className="lbl">Occasion</div><div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{OCCASIONS.map(o=><button key={o} className={`tc ${editItem.occasion.includes(o)?"on":""}`} onClick={()=>toggleArr("occasion",o)}>{o}</button>)}</div></div>
             </div>
 
-            {/* ── SECTION 3: ADVANCED (collapsed) ── */}
             <div>
               <button className="adv-toggle" onClick={()=>setAdvancedOpen(p=>!p)}>
                 <span>📋 Advanced / Selling Details <span style={{fontSize:11,fontWeight:400}}>(optional)</span></span>
@@ -795,21 +746,17 @@ export default function App(){
               )}
             </div>
 
-            {/* SAVE — never disabled due to AI */}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:4}}>
               {editItem.id&&<button className="btn" onClick={()=>handleDeleteItem(editItem.id)} style={{background:"#fdecea",color:G.red,padding:"10px 18px",fontSize:12,border:`1px solid ${G.red}44`,fontWeight:600}}>🗑 Delete</button>}
               <button className="btn" onClick={()=>setView("grid")} style={{background:"rgba(255,255,255,.8)",color:G.muted,padding:"10px 22px",fontSize:12,border:`1px solid ${G.border}`}}>Cancel</button>
-              <button className="btn" onClick={handleSaveItem}
-                style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 28px",fontSize:13,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>
+              <button className="btn" onClick={handleSaveItem} style={{background:`linear-gradient(135deg,${G.terracotta},${G.gold})`,color:"#fff",padding:"10px 28px",fontSize:13,fontWeight:700,boxShadow:"0 3px 10px rgba(193,96,58,.35)"}}>
                 {saved?"✓ Saved!":aiRunning?"Save Item ⏳":editItem.id?"Save Changes":"Save Item ✨"}
               </button>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* ITEM DETAIL */}
       {page==="inventory"&&view==="detail"&&selItem&&(()=>{
         const item=items.find(i=>i.id===selItem.id)||selItem;
         const st=stInfo(item.status);
@@ -867,7 +814,6 @@ export default function App(){
         );
       })()}
 
-      {/* OUTFITS GRID */}
       {page==="outfits"&&(view==="outfitGrid"||view==="grid")&&(
         <div style={{padding:"24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>My Outfits 👗</div>
@@ -879,7 +825,7 @@ export default function App(){
                 const photoItems=oItems.filter(i=>i.photo);
                 return(
                   <div key={outfit.id} className="card hover-card" onClick={()=>openDetailOutfit(outfit)}>
-                    {photoItems.length>0&&<div style={{display:"flex",height:90,overflow:"hidden",background:G.surface}}>{photoItems.slice(0,3).map(it=><div key={it.id} style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={it.photo} alt={it.name} style={{width:"100%",height:"100%",objectFit:"contain"}}/></div>)}</div>}
+                    {photoItems.length>0&&<div style={{display:"flex",height:90,overflow:"hidden",background:G.surface}}>{photoItems.slice(0,3).map(it=><div key={it.id} style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={it.photo} alt={it.name} style={{width:"100%",height:"100%",objectFit:"contain"}} loading="lazy"/></div>)}</div>}
                     <div style={{padding:"14px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span className="tag" style={{background:`${G.purple}18`,color:G.purple}}>{outfit.occasion||"Outfit"}</span><span className="tag" style={{background:`${G.green}18`,color:G.green}}>{outfit.season}</span></div>
                       <div className="serif" style={{fontSize:17,fontWeight:600,marginBottom:8,color:G.text}}>{outfit.name}</div>
@@ -895,7 +841,6 @@ export default function App(){
         </div>
       )}
 
-      {/* OUTFIT FORM */}
       {page==="outfits"&&view==="outfitForm"&&(
         <div style={{maxWidth:720,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>{editOutfit.id?"Edit Outfit":"Create Outfit ✨"}</div>
@@ -914,7 +859,7 @@ export default function App(){
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:8,maxHeight:360,overflowY:"auto",padding:2}}>
                     {items.map(it=>{const sel=editOutfit.itemIds.includes(it.id);return(
                       <div key={it.id} onClick={()=>toggleOutfitItem(it.id)} style={{background:sel?`${G.green}18`:"rgba(255,255,255,.7)",border:`1.5px solid ${sel?G.green:G.border}`,borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all .18s"}}>
-                        {it.photo&&<div style={{height:90,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}><img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:90,objectFit:"contain"}}/></div>}
+                        {it.photo&&<div style={{height:90,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}><img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:90,objectFit:"contain"}} loading="lazy"/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:9,color:sel?G.green:G.muted,fontWeight:sel?600:400,marginBottom:2,textTransform:"uppercase",letterSpacing:"1px"}}>{it.subcategory||it.category}</div>
                           <div style={{fontSize:12,fontWeight:500,lineHeight:1.3,color:G.text}}>{it.name}</div>
@@ -938,7 +883,6 @@ export default function App(){
         </div>
       )}
 
-      {/* OUTFIT DETAIL */}
       {page==="outfits"&&view==="outfitDetail"&&selOutfit&&(()=>{
         const outfit=outfits.find(o=>o.id===selOutfit.id)||selOutfit;
         const oItems=outfit.itemIds.map(id=>items.find(i=>i.id===id)).filter(Boolean);
@@ -958,7 +902,7 @@ export default function App(){
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:22}}>
                 {oItems.map(it=>{const st=stInfo(it.status);return(
                   <div key={it.id} className="card" style={{cursor:"pointer"}} onClick={()=>{setPage("inventory");openDetailItem(it);}}>
-                    {it.photo&&<div style={{height:110,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}><img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:110,objectFit:"contain"}}/></div>}
+                    {it.photo&&<div style={{height:110,background:G.surface,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}><img src={it.photo} alt={it.name} style={{maxWidth:"100%",maxHeight:110,objectFit:"contain"}} loading="lazy"/></div>}
                     <div style={{padding:"10px 12px"}}>
                       <div style={{fontSize:9,color:G.terracotta,marginBottom:2,textTransform:"uppercase",letterSpacing:"1px",fontWeight:600}}>{it.subcategory||it.category}</div>
                       <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:G.text}}>{it.name}</div>
@@ -978,7 +922,6 @@ export default function App(){
         );
       })()}
 
-      {/* SHOP */}
       {page==="shop"&&(
         <div style={{maxWidth:860,margin:"0 auto",padding:"28px 24px"}} className="slide">
           <div className="serif" style={{fontSize:28,fontWeight:700,marginBottom:4,color:G.text}}>Shop & Discover 🛍</div>
@@ -1046,7 +989,6 @@ export default function App(){
         </div>
       )}
 
-      {/* LINKS MODAL */}
       {linksModal&&(
         <div className="overlay" onClick={()=>setLinksModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
@@ -1063,8 +1005,8 @@ export default function App(){
         </div>
       )}
 
-      {/* LIGHTBOX */}
       {lightbox&&<div className="lightbox" onClick={()=>setLightbox(null)}><img src={lightbox} alt="Full size"/></div>}
     </div>
   );
 }
+
